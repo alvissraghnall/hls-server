@@ -4,6 +4,17 @@ use crate::{
     playlist::{PlayListVariableDefinition, SharedTag},
 };
 
+fn is_valid_ext_x_define(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn is_valid_ext_x_define_allow_empty(s: &str) -> bool {
+    s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
     let mut tag = SharedTag::default();
 
@@ -24,10 +35,6 @@ pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
         }
         "#EXT-X-INDEPENDENT-SEGMENTS" => Ok(SharedTag::IndependentSegments),
         s if s.starts_with("#EXT-X-START:") => {
-            // of tje form:
-            // #EXT-X-START:PRECISE=YES
-            // or
-            // #EXT-X-START:TIME-OFFSET=10.5
             let s = s
                 .strip_prefix("#EXT-X-START:")
                 .ok_or(ParseError::InvalidLine(format!(
@@ -52,14 +59,20 @@ pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
                 time_offset,
             })
         }
-        // s if s.starts_with("EXT-X-DEFINE:") => {
-        //     let name = s_split[1];
-        //     let value = s_split[2];
-        //     Ok(SharedTag::Variables(vec![PlayListVariableDefinition {
-        //         name: name.to_string(),
-        //         value: value.to_string(),
-        //     }]))
-        // }
+        s if s.starts_with("EXT-X-DEFINE:") => {
+            let attrs = s
+                .strip_prefix("#EXT-X-DEFINE:")
+                .ok_or(ParseError::InvalidLine(format!(
+                    "{} is not valid according to HLS spec.",
+                    line
+                )))?;
+            let attrs = parse_attribute_list(s)?;
+
+            Err(ParseError::UnknownTag(format!(
+                "{} is not valid according to HLS spec.",
+                line
+            )))
+        }
         _ => Err(ParseError::UnknownTag(format!(
             "{} is not valid according to HLS spec.",
             line
@@ -115,6 +128,39 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "PRECISE" => Ok(AttributeValue::EnumeratedString(value.to_string())),
 
         "CODECS" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+
+        "NAME" => {
+            let parsed = parse_quoted_string(value)?;
+            if !is_valid_ext_x_define(&parsed) {
+                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+            }
+            Ok(AttributeValue::QuotedString(parsed))
+        }
+        "VALUE" => {
+            let parsed = parse_quoted_string(value)?;
+
+            if !is_valid_ext_x_define_allow_empty(&parsed) {
+                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+            }
+
+            Ok(AttributeValue::QuotedString(parsed))
+        }
+
+        "IMPORT" => {
+            let parsed = parse_quoted_string(value)?;
+            if !is_valid_ext_x_define(&parsed) {
+                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+            }
+            Ok(AttributeValue::QuotedString(parsed))
+        }
+
+        "QUERYPARAM" => {
+            let parsed = parse_quoted_string(value)?;
+            if !is_valid_ext_x_define(&parsed) {
+                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+            }
+            Ok(AttributeValue::QuotedString(parsed))
+        }
 
         _ => Err(ParseError::UnknownAttribute(name.into())),
     }

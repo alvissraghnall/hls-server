@@ -1,4 +1,4 @@
-use crate::{error::ParseError, playlist::SharedTag, segment::Key, attribute_list::AttributeList};
+use crate::{attribute_list::AttributeList, error::ParseError, playlist::SharedTag, segment::Key};
 
 pub(crate) struct SessionData {
     data_id: String,
@@ -70,7 +70,11 @@ impl MultivariantPlaylist {
                 self.tags.push(MultivariantTag::Shared(tag));
             }
 
-            SharedTag::Variables(_) => {}
+            SharedTag::Variables(v) => {
+                v.iter().for_each(|var| {
+                    
+                });
+            }
 
             SharedTag::Start {
                 precise,
