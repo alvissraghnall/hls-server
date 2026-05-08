@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::types::AttributeList;
+use crate::attribute_list::AttributeList;
 
 struct MediaSegment {
     uri: String,

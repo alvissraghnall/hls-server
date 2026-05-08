@@ -1,4 +1,4 @@
-use crate::{segment::Key, types::AttributeList};
+use crate::{segment::Key, attribute_list::AttributeList};
 
 pub enum SharedTag {
     Version(u8),

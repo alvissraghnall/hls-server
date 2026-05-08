@@ -1,4 +1,4 @@
-use crate::{playlist::SharedTag, types::AttributeList};
+use crate::{playlist::SharedTag, attribute_list::AttributeList};
 
 enum MediaExclusiveTag {
     TargetDuration(u64),
@@ -17,7 +17,7 @@ enum PlayListType {
 }
 
 pub enum MediaTag {
-    Common(SharedTag),
+    Shared(SharedTag),
     Exclusive(MediaExclusiveTag),
 }
 
