@@ -1,14 +1,27 @@
-pub struct PlayList {}
+use crate::{segment::Key, types::AttributeList};
 
-enum PlayListType {
-    MEDIA,
-    MULTIVARIANT,
+pub enum SharedTag {
+    Version(u8),
+    Variables(Vec<PlayListVariableDefinition>),
+    IndependentSegments,
+    Start { precise: bool, time_offset: f64 },
 }
 
-impl PlayList {
-    // pub const TYPE: PlayListType;
+pub(crate) enum PlayListVariableDefinition {
+    NameValue { name: String, value: String },
+    Import { name: String },
+    QueryParam { name: String },
+}
 
-    pub const fn new() -> Self {
-        Self {}
+struct MediaMetadata {
+    daterange: Vec<AttributeList>,
+    skip: Vec<AttributeList>,
+    preload_hint: Vec<AttributeList>,
+    rendition_report: Option<AttributeList>,
+}
+
+impl Default for SharedTag {
+    fn default() -> Self {
+        Self::Version(0)
     }
 }
