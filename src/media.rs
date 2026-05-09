@@ -1,7 +1,12 @@
-use crate::{attribute_list::AttributeList, error::ParseError, playlist::SharedTag};
+use crate::{
+    attribute_list::AttributeList,
+    error::{ParseError, ValidationError},
+    multivariant::{MultivariantPlaylist, MultivariantTag},
+    playlist::{PlayListVariableDefinition, SharedTag},
+};
 
 enum MediaExclusiveTag {
-    TargetDuration(u64),
+    TargetDuration(u64), // #EXT-X-TARGETDURATION:
     MediaSequence(u64),
     DiscontinuitySequence(u64),
     EndList,
@@ -23,11 +28,18 @@ pub enum MediaTag {
 
 pub struct MediaPlaylist {
     pub tags: Vec<MediaTag>,
+
+    pub variables: Vec<PlayListVariableDefinition>,
+}
+
+struct PlaylistContext<'a> {
+    uri: &'a str,
+    parent_multivariant: Option<&'a MultivariantPlaylist>,
 }
 
 impl Default for MediaPlaylist {
     fn default() -> Self {
-        Self { tags: Vec::new() }
+        Self { tags: Vec::new(), variables: Vec::new() }
     }
 }
 
@@ -60,13 +72,16 @@ impl MediaPlaylist {
                 self.tags.push(MediaTag::Shared(tag));
             }
 
-            SharedTag::Variables(v) => {
-                v.iter().for_each(|var| {});
-            }
+            SharedTag::Variable(v) => match v {
+                PlayListVariableDefinition::NameValue { name: _, value: _ } => {}
+                PlayListVariableDefinition::Import { name: _ } => {}
+
+                PlayListVariableDefinition::QueryParam { name: _ } => {}
+            },
 
             SharedTag::Start {
-                precise,
-                time_offset,
+                precise: _,
+                time_offset: _,
             } => {
                 if self
                     .tags
@@ -78,6 +93,38 @@ impl MediaPlaylist {
                     )));
                 }
                 self.tags.push(MediaTag::Shared(tag));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate(&self, ctx: &PlaylistContext) -> Result<(), ValidationError> {
+        let master = ctx.parent_multivariant;
+        for tag in &self.tags {
+            if let MediaTag::Shared(SharedTag::Variable(v)) = tag {
+                match v {
+                    PlayListVariableDefinition::Import { .. } => match master {
+                        None => {
+                            return Err(ValidationError::ImportMediaWithoutMultivariant);
+                        }
+                        Some(master) => {
+                            if !master.tags.iter().any(|t| match t {
+                                MultivariantTag::Shared(SharedTag::Variable(
+                                    PlayListVariableDefinition::NameValue { name, .. },
+                                )) => name == v.get_name(),
+
+                                _ => false,
+                            }) {
+                                return Err(ValidationError::UnknownImportedVariable(
+                                    v.get_name().to_string(),
+                                ));
+                            }
+                        }
+                    },
+                    PlayListVariableDefinition::NameValue { name, value } => {}
+                    PlayListVariableDefinition::QueryParam { name } => {}
+                }
             }
         }
 

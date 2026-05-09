@@ -1,4 +1,4 @@
-use crate::{attribute_list::AttributeList, error::ParseError, playlist::SharedTag, segment::Key};
+use crate::{attribute_list::AttributeList, error::ParseError, playlist::{PlayListVariableDefinition, SharedTag}, segment::Key};
 
 pub(crate) struct SessionData {
     data_id: String,
@@ -70,15 +70,24 @@ impl MultivariantPlaylist {
                 self.tags.push(MultivariantTag::Shared(tag));
             }
 
-            SharedTag::Variables(v) => {
-                v.iter().for_each(|var| {
-                    
-                });
-            }
+            SharedTag::Variable(v) => match v {
+                PlayListVariableDefinition::NameValue { name: _, value: _ } => {}
+                PlayListVariableDefinition::Import { name: _ } => {
+                    return Err(ParseError::InvalidAttributeDefinition(String::from(
+                        "IMPORT attribute MUST not occur in Multivariant playlists",
+                    )));
+                }
+
+                PlayListVariableDefinition::QueryParam { name: _ } => {
+                    return Err(ParseError::InvalidAttributeDefinition(String::from(
+                        "QUERYPARAM attribute MUST not occur in Multivariant playlists",
+                    )));
+                }
+            },
 
             SharedTag::Start {
-                precise,
-                time_offset,
+                precise: _,
+                time_offset: _,
             } => {
                 if self.tags.iter().any(|t| {
                     matches!(

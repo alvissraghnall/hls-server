@@ -59,7 +59,7 @@ pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
                 time_offset,
             })
         }
-        s if s.starts_with("EXT-X-DEFINE:") => {
+        s if s.starts_with("#EXT-X-DEFINE:") => {
             let attrs = s
                 .strip_prefix("#EXT-X-DEFINE:")
                 .ok_or(ParseError::InvalidLine(format!(
@@ -68,10 +68,9 @@ pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
                 )))?;
             let attrs = parse_attribute_list(s)?;
 
-            Err(ParseError::UnknownTag(format!(
-                "{} is not valid according to HLS spec.",
-                line
-            )))
+            let var = PlayListVariableDefinition::try_from(attrs)?;
+
+            Ok(SharedTag::Variable(var))
         }
         _ => Err(ParseError::UnknownTag(format!(
             "{} is not valid according to HLS spec.",
@@ -181,3 +180,53 @@ fn parse_attribute_list(s: &str) -> Result<AttributeList, ParseError> {
     }
     Ok(attrs)
 }
+
+// fn build_playlist_def(mut map: AttributeList) -> Result<PlayListVariableDefinition, ParseError> {
+//     let has_import = map.contains_key("IMPORT");
+//     let has_query = map.contains_key("QUERY");
+//     let has_namevalue = map.contains_key("NAME") || map.contains_key("VALUE");
+
+//     let count = has_import as u8 + has_query as u8 + has_namevalue as u8;
+
+//     match count {
+//         0 => return Err(ParseError::NoAttribute),
+//         2.. => return Err(ParseError::TooManyAttributes),
+//         _ => {}
+//     }
+
+//     if has_import {
+//         let raw = map
+//             .remove("IMPORT")
+//             .ok_or(ParseError::UnknownAttribute("IMPORT".to_string()))?;
+
+//         return Ok(PlayListVariableDefinition::Import {
+//             name: extract_quoted_string(raw)?,
+//         });
+//     }
+
+//     if has_query {
+//         let raw = map
+//             .remove("QUERY")
+//             .ok_or(ParseError::UnknownAttribute("QUERY".to_string()))?;
+
+//         return Ok(PlayListVariableDefinition::QueryParam {
+//             name: extract_quoted_string(raw)?,
+//         });
+//     }
+
+//     if has_namevalue {
+//         let raw_name = map
+//             .remove("NAME")
+//             .ok_or(ParseError::UnknownAttribute("NAME".to_string()))?;
+//         let raw_value = map
+//             .remove("VALUE")
+//             .ok_or(ParseError::UnknownAttribute("VALUE".to_string()))?;
+
+//         return Ok(PlayListVariableDefinition::NameValue {
+//             name: extract_quoted_string(raw_name)?,
+//             value: extract_quoted_string(raw_value)?,
+//         });
+//     }
+
+//     Err(ParseError::NoAttribute)
+// }

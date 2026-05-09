@@ -1,7 +1,7 @@
 use std::{collections::HashMap, str::FromStr};
 
 use crate::{error::ParseError, playlist::PlayListVariableDefinition};
-
+ 
 pub(crate) enum AttributeValue {
     DecimalInteger(u64),
     DecimalFloatingPoint(f64),

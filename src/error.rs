@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParseError {
+pub enum ParseError { 
     InvalidLine(String),
     UnknownTag(String),
     DuplicateTag(String),
@@ -7,6 +7,14 @@ pub enum ParseError {
     InvalidQuotedString(String),
     UnknownAttribute(String),
     InvalidAttributeValue(String),
+    NoAttribute,
+    TooManyAttributes,
+    InvalidAttributeDefinition(String),
+}
+
+pub(crate) enum ValidationError {
+    UnknownImportedVariable(String),
+    ImportMediaWithoutMultivariant,
 }
 
 impl std::fmt::Display for ParseError {
@@ -19,6 +27,9 @@ impl std::fmt::Display for ParseError {
             ParseError::InvalidQuotedString(str) => write!(f, "Invalid quoted string: {str}"),
             ParseError::UnknownAttribute(attr) => write!(f, "Unknown attribute: {}", attr),
             ParseError::InvalidAttributeValue(attr) => write!(f, "Invalid attribute value: {}", attr),
+            ParseError::InvalidAttributeDefinition(str) => write!(f, "Invalid attribute definition: {str}"),
+            ParseError::NoAttribute => write!(f, "No attribute"),
+            ParseError::TooManyAttributes => write!(f, "Too many attributes than required."),
         }
     }
 }

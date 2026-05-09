@@ -5,6 +5,7 @@ mod playlist;
 mod segment;
 mod shared;
 mod attribute_list;
+mod uri;
 
 /**
  *
