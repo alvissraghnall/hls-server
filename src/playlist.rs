@@ -1,7 +1,4 @@
-use crate::{
-    attribute_list::{AttributeList},
-    error::ParseError,
-};
+use crate::{attribute_list::AttributeList, error::ParseError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SharedTag {
@@ -15,7 +12,7 @@ pub enum SharedTag {
 pub(crate) enum PlayListVariableDefinition {
     NameValue { name: String, value: String },
     Import { name: String },
-    QueryParam { name: String },
+    QueryParam { name: String, value: String },
 }
 
 struct MediaMetadata {
@@ -72,7 +69,8 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
             return Ok(PlayListVariableDefinition::Import {
                 name: raw
                     .as_quoted_string()
-                    .ok_or(ParseError::ExpectedQuotedString)?.to_string(),
+                    .ok_or(ParseError::ExpectedQuotedString)?
+                    .to_string(),
             });
         }
 
@@ -84,7 +82,9 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
             return Ok(PlayListVariableDefinition::QueryParam {
                 name: raw
                     .as_quoted_string()
-                    .ok_or(ParseError::ExpectedQuotedString)?.to_string(),
+                    .ok_or(ParseError::ExpectedQuotedString)?
+                    .to_string(),
+                value: String::new(),
             });
         }
 
@@ -99,10 +99,12 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
             return Ok(PlayListVariableDefinition::NameValue {
                 name: raw_name
                     .as_quoted_string()
-                    .ok_or(ParseError::ExpectedQuotedString)?.to_string(),
+                    .ok_or(ParseError::ExpectedQuotedString)?
+                    .to_string(),
                 value: raw_value
                     .as_quoted_string()
-                    .ok_or(ParseError::ExpectedQuotedString)?.to_string(),
+                    .ok_or(ParseError::ExpectedQuotedString)?
+                    .to_string(),
             });
         }
 

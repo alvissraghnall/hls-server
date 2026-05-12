@@ -1,4 +1,11 @@
-use crate::{attribute_list::AttributeList, error::ParseError, playlist::{PlayListVariableDefinition, SharedTag}, segment::Key};
+use crate::{
+    attribute_list::AttributeList,
+    error::{ParseError, ValidationError},
+    playlist::{PlayListVariableDefinition, SharedTag},
+    segment::Key,
+    shared::is_valid_ext_x_define as is_valid_quoted_string,
+    uri::decode_uri,
+};
 
 pub(crate) struct SessionData {
     data_id: String,
@@ -12,6 +19,10 @@ enum SessionDataFormat {
     Json,
 }
 
+struct PlaylistContext<'a> {
+    uri: &'a str,
+}
+
 enum SessionDataType {
     Value,
     Uri,
@@ -19,12 +30,16 @@ enum SessionDataType {
 
 impl Default for MultivariantPlaylist {
     fn default() -> Self {
-        Self { tags: Vec::new() }
+        Self {
+            tags: Vec::new(),
+            variables: Vec::new(),
+        }
     }
 }
 
 pub struct MultivariantPlaylist {
     pub tags: Vec<MultivariantTag>,
+    pub variables: Vec<PlayListVariableDefinition>,
 }
 
 pub(crate) enum MultivariantExclusiveTag {
@@ -71,16 +86,23 @@ impl MultivariantPlaylist {
             }
 
             SharedTag::Variable(v) => match v {
-                PlayListVariableDefinition::NameValue { name: _, value: _ } => {}
+                PlayListVariableDefinition::NameValue { name: _, value: _ }
+                | PlayListVariableDefinition::QueryParam { name: _, value: _ } => {
+                    if self.variables.iter().any(|v| {
+                        matches!(
+                            v,
+                            PlayListVariableDefinition::NameValue { name, value: _ }
+                                | PlayListVariableDefinition::QueryParam { name, value: _ }
+                                if name == v.get_name()
+                        )
+                    }) {
+                        return Err(ParseError::DuplicateTag(String::from("EXT-X-DEFINE")));
+                    }
+                    self.variables.push(v);
+                }
                 PlayListVariableDefinition::Import { name: _ } => {
                     return Err(ParseError::InvalidAttributeDefinition(String::from(
                         "IMPORT attribute MUST not occur in Multivariant playlists",
-                    )));
-                }
-
-                PlayListVariableDefinition::QueryParam { name: _ } => {
-                    return Err(ParseError::InvalidAttributeDefinition(String::from(
-                        "QUERYPARAM attribute MUST not occur in Multivariant playlists",
                     )));
                 }
             },
@@ -101,6 +123,62 @@ impl MultivariantPlaylist {
                 }
                 self.tags.push(MultivariantTag::Shared(tag));
             }
+        }
+
+        Ok(())
+    }
+
+    fn validate(&mut self, ctx: &PlaylistContext) -> Result<(), ValidationError> {
+        for tag in &self.tags {
+            if let MultivariantTag::Shared(SharedTag::Variable(v)) = tag {
+                match v {
+                    PlayListVariableDefinition::Import { .. } => {
+                        return Err(ValidationError::InvalidMultivariantAttribute);
+                    }
+                    PlayListVariableDefinition::NameValue { name, value } => {}
+                    PlayListVariableDefinition::QueryParam { name, value: _ } => {
+                        let decoded = decode_uri(ctx.uri);
+
+                        // verify the decoded URI contains the name as a query param
+                        if !is_valid_quoted_string(&decoded) || !decoded.contains(name) {
+                            return Err(ValidationError::UnknownImportedVariable(
+                                decoded.to_string(),
+                            ));
+                        }
+                        // we want to check for:::
+                        // eg: /path/to/playlist.m3u8?&xx=yy&tt=lola
+                        // so, first we split the uri by '?' to get the query params
+                        // then we split each param by '=' to get the name/value pair
+                        // then we check if the name matches the one we're looking for
+                        // if not, we return an error
+                        // in code:
+                        // url.split('?').last().unwrap_or("") returns "name=value&xx=yy&tt=lola"
+                        // then we split by '&' to get the individual params
+                        // and check if any of them match the name we're looking for
+                        let var = decoded
+                            .split('?')
+                            .last()
+                            .unwrap_or("")
+                            .split('&') // curr: "name=value"
+                            .find(|param| param.split('=').next() == Some(name));
+                        let value = var.unwrap().split('=').nth(1).unwrap_or("");
+
+                        if var.is_none() || value.is_empty() {
+                            return Err(ValidationError::UnknownImportedVariable(
+                                decoded.to_string(),
+                            ));
+                        }
+
+                        self.variables.iter_mut()
+                            .find(|v| matches!(v, PlayListVariableDefinition::QueryParam { name: nom, value: _ } if var == Some(nom)))
+                            .map(|v| {
+                                if let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v {
+                                    *v = PlayListVariableDefinition::QueryParam { name: name.to_string(), value: value.to_string() };
+                                }
+                            });
+                    }
+                }
+            };
         }
 
         Ok(())

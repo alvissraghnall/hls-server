@@ -3,6 +3,8 @@ use crate::{
     error::{ParseError, ValidationError},
     multivariant::{MultivariantPlaylist, MultivariantTag},
     playlist::{PlayListVariableDefinition, SharedTag},
+    shared::is_valid_ext_x_define as is_valid_quoted_string,
+    uri::decode_uri,
 };
 
 enum MediaExclusiveTag {
@@ -39,7 +41,10 @@ struct PlaylistContext<'a> {
 
 impl Default for MediaPlaylist {
     fn default() -> Self {
-        Self { tags: Vec::new(), variables: Vec::new() }
+        Self {
+            tags: Vec::new(),
+            variables: Vec::new(),
+        }
     }
 }
 
@@ -73,10 +78,22 @@ impl MediaPlaylist {
             }
 
             SharedTag::Variable(v) => match v {
-                PlayListVariableDefinition::NameValue { name: _, value: _ } => {}
-                PlayListVariableDefinition::Import { name: _ } => {}
-
-                PlayListVariableDefinition::QueryParam { name: _ } => {}
+                PlayListVariableDefinition::NameValue { name: _, value: _ }
+                | PlayListVariableDefinition::QueryParam { name: _, value: _ }
+                | PlayListVariableDefinition::Import { name: _ } => {
+                    if self.variables.iter().any(|v| {
+                        matches!(
+                            v,
+                            PlayListVariableDefinition::NameValue { name, value: _ }
+                                | PlayListVariableDefinition::QueryParam { name, value: _ }
+                                | PlayListVariableDefinition::Import { name }
+                                if name == v.get_name()
+                        )
+                    }) {
+                        return Err(ParseError::DuplicateTag(String::from("EXT-X-DEFINE")));
+                    }
+                    self.variables.push(v);
+                }
             },
 
             SharedTag::Start {
@@ -99,7 +116,7 @@ impl MediaPlaylist {
         Ok(())
     }
 
-    fn validate(&self, ctx: &PlaylistContext) -> Result<(), ValidationError> {
+    fn validate(&mut self, ctx: &PlaylistContext) -> Result<(), ValidationError> {
         let master = ctx.parent_multivariant;
         for tag in &self.tags {
             if let MediaTag::Shared(SharedTag::Variable(v)) = tag {
@@ -123,7 +140,47 @@ impl MediaPlaylist {
                         }
                     },
                     PlayListVariableDefinition::NameValue { name, value } => {}
-                    PlayListVariableDefinition::QueryParam { name } => {}
+                    PlayListVariableDefinition::QueryParam { name, value: _ } => {
+                        let decoded = decode_uri(ctx.uri);
+
+                        // verify the decoded URI contains the name as a query param
+                        if !is_valid_quoted_string(&decoded) || !decoded.contains(name) {
+                            return Err(ValidationError::UnknownImportedVariable(
+                                decoded.to_string(),
+                            ));
+                        }
+                        // we want to check for:::
+                        // eg: /path/to/playlist.m3u8?&xx=yy&tt=lola
+                        // so, first we split the uri by '?' to get the query params
+                        // then we split each param by '=' to get the name/value pair
+                        // then we check if the name matches the one we're looking for
+                        // if not, we return an error
+                        // in code:
+                        // url.split('?').last().unwrap_or("") returns "name=value&xx=yy&tt=lola"
+                        // then we split by '&' to get the individual params
+                        // and check if any of them match the name we're looking for
+                        let var = decoded
+                            .split('?')
+                            .last()
+                            .unwrap_or("")
+                            .split('&') // curr: "name=value"
+                            .find(|param| param.split('=').next() == Some(name));
+                        let value = var.unwrap().split('=').nth(1).unwrap_or("");
+
+                        if var.is_none() || value.is_empty() {
+                            return Err(ValidationError::UnknownImportedVariable(
+                                decoded.to_string(),
+                            ));
+                        }
+
+                        self.variables.iter_mut()
+                            .find(|v| matches!(v, PlayListVariableDefinition::QueryParam { name: nom, value: _ } if var == Some(nom)))
+                            .map(|v| {
+                                if let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v {
+                                    *v = PlayListVariableDefinition::QueryParam { name: name.to_string(), value: value.to_string() };
+                                }
+                            });
+                    }
                 }
             }
         }

@@ -4,7 +4,7 @@ use crate::{
     playlist::{PlayListVariableDefinition, SharedTag},
 };
 
-fn is_valid_ext_x_define(s: &str) -> bool {
+pub(crate) fn is_valid_ext_x_define(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -112,6 +112,7 @@ fn parse_variable_definition(
     if let Some(query_param) = attrs.get("QUERY_PARAM") {
         return Ok(PlayListVariableDefinition::QueryParam {
             name: query_param.to_string(),
+            value: String::new(),
         });
     }
 
