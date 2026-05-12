@@ -66,7 +66,7 @@ pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
                     "{} is not valid according to HLS spec.",
                     line
                 )))?;
-            let attrs = parse_attribute_list(s)?;
+            let attrs = parse_attribute_list(attrs)?;
 
             let var = PlayListVariableDefinition::try_from(attrs)?;
 
@@ -180,6 +180,83 @@ fn parse_attribute_list(s: &str) -> Result<AttributeList, ParseError> {
         attrs.insert(key.to_string(), parse_attribute_value(key, value)?);
     }
     Ok(attrs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::playlist::PlayListVariableDefinition;
+
+    #[test]
+    fn test_parse_version() {
+        let tag = parse_shared_tag("#EXT-X-VERSION:3").unwrap();
+        assert_eq!(tag, SharedTag::Version(3));
+
+        assert!(parse_shared_tag("#EXT-X-VERSION:abc").is_err());
+    }
+
+    #[test]
+    fn test_parse_independent_segments() {
+        let tag = parse_shared_tag("#EXT-X-INDEPENDENT-SEGMENTS").unwrap();
+        assert_eq!(tag, SharedTag::IndependentSegments);
+    }
+
+    #[test]
+    fn test_parse_start() {
+        let tag = parse_shared_tag("#EXT-X-START:TIME-OFFSET=10.5,PRECISE=YES").unwrap();
+        assert_eq!(
+            tag,
+            SharedTag::Start {
+                precise: true,
+                time_offset: 10.5
+            }
+        );
+
+        let tag = parse_shared_tag("#EXT-X-START:TIME-OFFSET=-2.0").unwrap();
+        assert_eq!(
+            tag,
+            SharedTag::Start {
+                precise: false,
+                time_offset: -2.0
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_define_name_value() {
+        let tag = parse_shared_tag("#EXT-X-DEFINE:NAME=\"VAR\",VALUE=\"val\"").unwrap();
+        if let SharedTag::Variable(PlayListVariableDefinition::NameValue { name, value }) = tag {
+            assert_eq!(name, "VAR");
+            assert_eq!(value, "val");
+        } else {
+            panic!("Expected NameValue");
+        }
+    }
+
+    #[test]
+    fn test_parse_define_import() {
+        let tag = parse_shared_tag("#EXT-X-DEFINE:IMPORT=\"VAR\"").unwrap();
+        if let SharedTag::Variable(PlayListVariableDefinition::Import { name }) = tag {
+            assert_eq!(name, "VAR");
+        } else {
+            panic!("Expected Import");
+        }
+    }
+
+    #[test]
+    fn test_parse_attribute_list() {
+        let attrs = parse_attribute_list("NAME=\"VAR\",VALUE=\"val\",BANDWIDTH=1000").unwrap();
+        assert!(attrs.contains_key("NAME"));
+        assert!(attrs.contains_key("VALUE"));
+        assert!(attrs.contains_key("BANDWIDTH"));
+    }
+
+    #[test]
+    fn test_parse_quoted_string() {
+        assert_eq!(parse_quoted_string("\"hello\"").unwrap(), "hello");
+        assert!(parse_quoted_string("hello").is_err());
+        assert!(parse_quoted_string("\"hello\n\"").is_err());
+    }
 }
 
 // fn build_playlist_def(mut map: AttributeList) -> Result<PlayListVariableDefinition, ParseError> {

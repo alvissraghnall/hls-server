@@ -111,3 +111,81 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
         Err(ParseError::NoAttribute)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::attribute_list::{AttributeList, AttributeValue};
+
+    #[test]
+    fn test_variable_def_from_attributes_name_value() {
+        let mut attrs = AttributeList::new();
+        attrs.insert(
+            "NAME".to_string(),
+            AttributeValue::QuotedString("VAR".to_string()),
+        );
+        attrs.insert(
+            "VALUE".to_string(),
+            AttributeValue::QuotedString("VAL".to_string()),
+        );
+
+        let var = PlayListVariableDefinition::try_from(attrs).unwrap();
+        assert_eq!(
+            var,
+            PlayListVariableDefinition::NameValue {
+                name: "VAR".to_string(),
+                value: "VAL".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_variable_def_from_attributes_import() {
+        let mut attrs = AttributeList::new();
+        attrs.insert(
+            "IMPORT".to_string(),
+            AttributeValue::QuotedString("VAR".to_string()),
+        );
+
+        let var = PlayListVariableDefinition::try_from(attrs).unwrap();
+        assert_eq!(
+            var,
+            PlayListVariableDefinition::Import {
+                name: "VAR".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_variable_def_from_attributes_query() {
+        let mut attrs = AttributeList::new();
+        attrs.insert(
+            "QUERY".to_string(),
+            AttributeValue::QuotedString("VAR".to_string()),
+        );
+
+        let var = PlayListVariableDefinition::try_from(attrs).unwrap();
+        assert_eq!(
+            var,
+            PlayListVariableDefinition::QueryParam {
+                name: "VAR".to_string(),
+                value: String::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_variable_def_from_attributes_invalid() {
+        let mut attrs = AttributeList::new();
+        attrs.insert(
+            "NAME".to_string(),
+            AttributeValue::QuotedString("VAR".to_string()),
+        );
+        attrs.insert(
+            "IMPORT".to_string(),
+            AttributeValue::QuotedString("VAR".to_string()),
+        );
+
+        assert!(PlayListVariableDefinition::try_from(attrs).is_err());
+    }
+}

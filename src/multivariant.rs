@@ -184,3 +184,42 @@ impl MultivariantPlaylist {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::playlist::SharedTag;
+
+    #[test]
+    fn test_multivariant_playlist_apply_version() {
+        let mut playlist = MultivariantPlaylist::default();
+        playlist.apply_tag(SharedTag::Version(3)).unwrap();
+        assert_eq!(playlist.tags.len(), 1);
+
+        assert!(playlist.apply_tag(SharedTag::Version(4)).is_err());
+    }
+
+    #[test]
+    fn test_multivariant_playlist_apply_import_fail() {
+        let mut playlist = MultivariantPlaylist::default();
+        assert!(
+            playlist
+                .apply_tag(SharedTag::Variable(PlayListVariableDefinition::Import {
+                    name: "BAD".to_string()
+                }))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_multivariant_playlist_apply_define() {
+        let mut playlist = MultivariantPlaylist::default();
+        playlist
+            .apply_tag(SharedTag::Variable(PlayListVariableDefinition::NameValue {
+                name: "VAR".to_string(),
+                value: "VAL".to_string(),
+            }))
+            .unwrap();
+        assert_eq!(playlist.variables.len(), 1);
+    }
+}

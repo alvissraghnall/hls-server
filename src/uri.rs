@@ -5,15 +5,7 @@ pub fn encode_uri(input: impl AsRef<str>) -> String {
 
     for b in input.bytes() {
         match b {
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'_'
-            | b'-'
-            | b'.'
-            | b':'
-            | b'/'
-            | b'\\' => {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'.' | b':' | b'/' | b'\\' => {
                 out.push(b as char);
             }
 
@@ -72,5 +64,30 @@ fn from_hex(b: u8) -> Option<u8> {
         b'a'..=b'f' => Some(b - b'a' + 10),
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_uri() {
+        assert_eq!(encode_uri("foo bar"), "foo%20bar");
+        assert_eq!(encode_uri("a/b:c"), "a/b:c");
+        assert_eq!(encode_uri("!@#"), "%21%40%23");
+    }
+
+    #[test]
+    fn test_decode_uri() {
+        assert_eq!(decode_uri("foo%20bar"), "foo bar");
+        assert_eq!(decode_uri("a/b:c"), "a/b:c");
+        assert_eq!(decode_uri("%21%40%23"), "!@#");
+    }
+
+    #[test]
+    fn test_decode_invalid() {
+        assert_eq!(decode_uri("%2G"), "%2G");
+        assert_eq!(decode_uri("%2"), "%2");
     }
 }

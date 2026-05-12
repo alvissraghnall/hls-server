@@ -10,12 +10,16 @@ pub enum ParseError {
     NoAttribute,
     TooManyAttributes,
     InvalidAttributeDefinition(String),
+    MediaSequenceAfterSegment,
+    
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ValidationError {
     UnknownImportedVariable(String),
     ImportMediaWithoutMultivariant,
     InvalidMultivariantAttribute,
+    InvalidTargetDuration,
 }
 
 impl std::fmt::Display for ParseError {
@@ -35,11 +39,31 @@ impl std::fmt::Display for ParseError {
             }
             ParseError::NoAttribute => write!(f, "No attribute"),
             ParseError::TooManyAttributes => write!(f, "Too many attributes than required."),
+            ParseError::MediaSequenceAfterSegment => write!(f, "Media sequence after segment"),
+        }
+    }
+}
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValidationError::UnknownImportedVariable(var) => {
+                write!(f, "Unknown imported variable: {var}")
+            }
+            ValidationError::ImportMediaWithoutMultivariant => {
+                write!(f, "Import media playlist without multivariant")
+            }
+            ValidationError::InvalidMultivariantAttribute => {
+                write!(f, "Invalid multivariant attribute")
+            }
+            ValidationError::InvalidTargetDuration => write!(f, "Invalid target duration"),
         }
     }
 }
 
 impl std::error::Error for ParseError {}
+
+impl std::error::Error for ValidationError {}
 
 impl From<std::num::ParseIntError> for ParseError {
     fn from(err: std::num::ParseIntError) -> Self {

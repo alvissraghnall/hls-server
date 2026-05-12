@@ -1,10 +1,18 @@
+use std::sync::mpsc::SendError;
+
+use crate::{
+    error::ParseError,
+    media::{MediaExclusiveTag, parse_media_exclusive_tag},
+    shared::parse_shared_tag,
+};
+
+mod attribute_list;
 mod error;
 mod media;
 mod multivariant;
 mod playlist;
 mod segment;
 mod shared;
-mod attribute_list;
 mod uri;
 
 /**
@@ -27,6 +35,32 @@ mod uri;
  * 3.3 if line is empty, skip it
  * 4.
  */
+
+fn parse_media_playlist(lines: &[String]) -> Result<media::MediaPlaylist, error::ParseError> {
+    let mut playlist = media::MediaPlaylist::default();
+    let seen_first_segment = false;
+    for line in lines {
+        match parse_media_exclusive_tag(line) {
+            Ok(tag) => {
+                if matches!(
+                    tag,
+                    MediaExclusiveTag::MediaSequence(_)
+                        | MediaExclusiveTag::DiscontinuitySequence(_)
+                ) && seen_first_segment
+                {
+                    return Err(ParseError::MediaSequenceAfterSegment);
+                }
+
+                // also ensure X-DISCONTINUITY-SEQUENCE appears
+                // before EXT-X-DISCONTINUITY tag
+            }
+
+            // and if we encounter a segment URI, set seen_first_segment to true
+            _ => {}
+        }
+    }
+    Ok(playlist)
+}
 
 #[cfg(test)]
 mod tests {
