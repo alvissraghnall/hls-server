@@ -1,9 +1,9 @@
 use crate::{
     attribute_list::AttributeList,
+    attribute_list::is_valid_ext_x_define as is_valid_quoted_string,
     error::{ParseError, ValidationError},
     playlist::{PlayListVariableDefinition, SharedTag},
     segment::Key,
-    shared::is_valid_ext_x_define as is_valid_quoted_string,
     uri::decode_uri,
 };
 

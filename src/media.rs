@@ -1,12 +1,13 @@
 use std::{fmt, str::FromStr};
 
 use crate::{
-    attribute_list::AttributeList,
+    attribute_list::{
+        AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
+    },
     error::{ParseError, ValidationError},
     multivariant::{MultivariantPlaylist, MultivariantTag},
     playlist::{PlayListVariableDefinition, SharedTag},
     segment::MediaSegment,
-    shared::is_valid_ext_x_define as is_valid_quoted_string,
     uri::decode_uri,
 };
 
@@ -17,9 +18,9 @@ pub(crate) enum MediaExclusiveTag {
     DiscontinuitySequence(u64),
     EndList,
     PlaylistType(PlayListType),
-    IFramesOnly,
-    PartInf(AttributeList),
-    ServerControl(AttributeList),
+    IFramesOnly, // requires v4 at least
+    PartInf { part_target: f64 },
+    ServerControl(ServerControl),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +49,17 @@ pub struct MediaPlaylist {
 struct PlaylistContext<'a> {
     uri: &'a str,
     parent_multivariant: Option<&'a MultivariantPlaylist>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ServerControl {
+    can_skip_until: Option<f64>, // value must be at least 6x target duration
+    can_skip_dateranges: Option<bool>, // requires the former
+    hold_back: Option<f64>,      // default: 3x target duration
+    // >= 2x part target duration (MUST)
+    // >= 3x target duration (SHOULD)
+    part_hold_back: Option<f64>, // required if EXT-X-PART-INF is present
+    can_block_reload: bool,
 }
 
 impl Default for MediaPlaylist {
@@ -164,12 +176,9 @@ impl MediaPlaylist {
             | MediaExclusiveTag::DiscontinuitySequence(_)
             | MediaExclusiveTag::EndList
             | MediaExclusiveTag::PlaylistType(_)
-            | MediaExclusiveTag::IFramesOnly => {
+            | MediaExclusiveTag::IFramesOnly
+            | MediaExclusiveTag::PartInf { .. } => {
                 self.tags.push(MediaTag::Exclusive(tag));
-            }
-            MediaExclusiveTag::PartInf(attrs) => {
-                self.tags
-                    .push(MediaTag::Exclusive(MediaExclusiveTag::PartInf(attrs)));
             }
             MediaExclusiveTag::ServerControl(attrs) => {
                 self.tags
@@ -331,7 +340,92 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
         s if line.starts_with("#EXT-X-IFRAMES-ONLY:") => {
             return Ok(MediaExclusiveTag::IFramesOnly);
         }
+        s if line.starts_with("#EXT-X-PART-INF:") => {
+            let attrs = s
+                .strip_prefix("#EXT-X-PART-INF:")
+                .ok_or(ParseError::InvalidLine(format!(
+                    "{} is not valid according to HLS spec.",
+                    line
+                )))?;
+
+            let attrs = parse_attribute_list(attrs)?;
+            let part_target = attrs
+                .get("PART-TARGET")
+                .and_then(|v| v.as_decimal_floating_point())
+                .ok_or(ParseError::InvalidLine(format!(
+                    "{line} is not valid according to HLS spec."
+                )))?;
+            Ok(MediaExclusiveTag::PartInf { part_target })
+        }
+        s if line.starts_with("#EXT-X-SERVER-CONTROL:") => {
+            let attrs = s
+                .strip_prefix("#EXT-X-SERVER-CONTROL:")
+                .ok_or(ParseError::InvalidLine(format!(
+                    "{} is not valid according to HLS spec.",
+                    line
+                )))?;
+            let attrs = parse_attribute_list(attrs)?;
+
+            Err(ParseError::InvalidLine(format!(
+                "{} is not valid according to HLS spec.",
+                line
+            )))
+        }
         _ => Err(ParseError::InvalidLine(line.to_string())),
+    }
+}
+
+impl ServerControl {
+    pub fn new(attrs: AttributeList) -> Result<Self, ParseError> {
+        Self::try_from(attrs)
+    }
+}
+
+impl Default for ServerControl {
+    fn default() -> Self {
+        Self {
+            can_skip_until: None,
+            can_skip_dateranges: None,
+            hold_back: None,
+            part_hold_back: None,
+            can_block_reload: false,
+        }
+    }
+}
+
+impl TryFrom<AttributeList> for ServerControl {
+    type Error = ParseError;
+
+    fn try_from(attrs: AttributeList) -> Result<Self, Self::Error> {
+        let can_skip_until = attrs
+            .get("CAN-SKIP-UNTIL")
+            .and_then(|v| v.as_decimal_floating_point());
+        let can_skip_dateranges =
+            attrs
+                .get("CAN-SKIP-DATERANGES")
+                .and_then(|v| match v.as_enumerated_string() {
+                    Some("YES") => Some(true),
+                    Some("NO") => Some(false),
+                    _ => None,
+                });
+        let hold_back = attrs
+            .get("HOLD-BACK")
+            .and_then(|v| v.as_decimal_floating_point());
+        let part_hold_back = attrs
+            .get("PART-HOLD-BACK")
+            .and_then(|v| v.as_decimal_floating_point());
+        let can_block_reload = attrs
+            .get("CAN-BLOCK-RELOAD")
+            .and_then(|v| v.as_enumerated_string())
+            .map(|v| v == "YES")
+            .unwrap_or(false);
+        Ok(Self {
+            can_skip_until,
+            can_skip_dateranges,
+            hold_back,
+            part_hold_back,
+            can_block_reload,
+        })
     }
 }
 
@@ -397,7 +491,7 @@ mod tests {
  * > Natural Elements - aligNmEnt
  * > MELODOWNZ, Coops - BRON
  * > Your stepdad - supergood
- * > Action Bronson - PLANET FROG
+ * > Action Bronson - PLANET FROG (MAY, my error)
  * > Blu x Exile - Time Heals Everything
- * >
+ * > Rosco P. Coldchain & Nicholas Craven - Play With Something Safe
  */

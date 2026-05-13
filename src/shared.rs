@@ -1,23 +1,10 @@
 use crate::{
-    attribute_list::{AttributeList, AttributeValue},
+    attribute_list::{AttributeList, AttributeValue, parse_attribute_list},
     error::ParseError,
     playlist::{PlayListVariableDefinition, SharedTag},
 };
 
-pub(crate) fn is_valid_ext_x_define(s: &str) -> bool {
-    !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
-fn is_valid_ext_x_define_allow_empty(s: &str) -> bool {
-    s.bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
 pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
-    let mut tag = SharedTag::default();
-
     match line {
         s if s.starts_with("#EXT-X-VERSION:") => {
             let version = s
@@ -79,20 +66,6 @@ pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
     }
 }
 
-fn parse_quoted_string(value: &str) -> Result<String, ParseError> {
-    if !(value.starts_with('"') && value.ends_with('"')) {
-        return Err(ParseError::ExpectedQuotedString);
-    }
-
-    let inner = &value[1..value.len() - 1];
-
-    if inner.contains('"') || inner.contains('\n') || inner.contains('\r') {
-        return Err(ParseError::InvalidQuotedString(inner.to_string()));
-    }
-
-    Ok(inner.to_string())
-}
-
 fn parse_variable_definition(
     attrs: &AttributeList,
 ) -> Result<PlayListVariableDefinition, ParseError> {
@@ -119,73 +92,10 @@ fn parse_variable_definition(
     Err(ParseError::UnknownTag(format!("{:?}", attrs.keys())))
 }
 
-fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, ParseError> {
-    match name {
-        "BANDWIDTH" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
-
-        "TIME-OFFSET" => Ok(AttributeValue::SignedDecimalFloatingPoint(value.parse()?)),
-
-        "PRECISE" => Ok(AttributeValue::EnumeratedString(value.to_string())),
-
-        "CODECS" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
-
-        "NAME" => {
-            let parsed = parse_quoted_string(value)?;
-            if !is_valid_ext_x_define(&parsed) {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
-            }
-            Ok(AttributeValue::QuotedString(parsed))
-        }
-        "VALUE" => {
-            let parsed = parse_quoted_string(value)?;
-
-            if !is_valid_ext_x_define_allow_empty(&parsed) {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
-            }
-
-            Ok(AttributeValue::QuotedString(parsed))
-        }
-
-        "IMPORT" => {
-            let parsed = parse_quoted_string(value)?;
-            if !is_valid_ext_x_define(&parsed) {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
-            }
-            Ok(AttributeValue::QuotedString(parsed))
-        }
-
-        "QUERYPARAM" => {
-            let parsed = parse_quoted_string(value)?;
-            if !is_valid_ext_x_define(&parsed) {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
-            }
-            Ok(AttributeValue::QuotedString(parsed))
-        }
-
-        _ => Err(ParseError::UnknownAttribute(name.into())),
-    }
-}
-
-fn parse_attribute_list(s: &str) -> Result<AttributeList, ParseError> {
-    let mut attrs = AttributeList::new();
-    for (key, value) in s
-        .split(',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.split_once('='))
-        .flatten()
-    {
-        let key = key.trim();
-        let value = value.trim();
-        attrs.insert(key.to_string(), parse_attribute_value(key, value)?);
-    }
-    Ok(attrs)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::playlist::PlayListVariableDefinition;
+    use crate::{attribute_list::parse_quoted_string, playlist::PlayListVariableDefinition};
 
     #[test]
     fn test_parse_version() {
