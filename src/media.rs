@@ -7,8 +7,7 @@ use crate::{
     error::{ParseError, ValidationError},
     multivariant::{MultivariantPlaylist, MultivariantTag},
     playlist::{PlayListVariableDefinition, SharedTag},
-    segment::MediaSegment,
-    uri::decode_uri,
+    segment::MediaSegment, uri::decode,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -219,7 +218,7 @@ impl MediaPlaylist {
                     },
                     PlayListVariableDefinition::NameValue { name, value } => {}
                     PlayListVariableDefinition::QueryParam { name, value: _ } => {
-                        let decoded = decode_uri(ctx.uri);
+                        let decoded = decode(ctx.uri)?;
 
                         // verify the decoded URI contains the name as a query param
                         if !is_valid_quoted_string(&decoded) || !decoded.contains(name) {

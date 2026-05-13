@@ -1,3 +1,5 @@
+use crate::uri::UriError;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
     InvalidLine(String),
@@ -11,13 +13,13 @@ pub enum ParseError {
     TooManyAttributes,
     InvalidAttributeDefinition(String),
     MediaSequenceAfterSegment,
-    
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ValidationError {
     UnknownImportedVariable(String),
     ImportMediaWithoutMultivariant,
+    InvalidUri,
     InvalidMultivariantAttribute,
     InvalidTargetDuration,
 }
@@ -57,6 +59,8 @@ impl std::fmt::Display for ValidationError {
                 write!(f, "Invalid multivariant attribute")
             }
             ValidationError::InvalidTargetDuration => write!(f, "Invalid target duration"),
+            ValidationError::InvalidUri => write!(f, "Invalid URI"),
+            
         }
     }
 }
@@ -74,5 +78,11 @@ impl From<std::num::ParseIntError> for ParseError {
 impl From<std::num::ParseFloatError> for ParseError {
     fn from(err: std::num::ParseFloatError) -> Self {
         ParseError::InvalidAttributeValue(err.to_string())
+    }
+}
+
+impl From<UriError> for ValidationError {
+    fn from(_: UriError) -> ValidationError {
+        ValidationError::InvalidUri
     }
 }

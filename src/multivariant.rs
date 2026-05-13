@@ -4,7 +4,7 @@ use crate::{
     error::{ParseError, ValidationError},
     playlist::{PlayListVariableDefinition, SharedTag},
     segment::Key,
-    uri::decode_uri,
+    uri::decode,
 };
 
 pub(crate) struct SessionData {
@@ -137,7 +137,7 @@ impl MultivariantPlaylist {
                     }
                     PlayListVariableDefinition::NameValue { name, value } => {}
                     PlayListVariableDefinition::QueryParam { name, value: _ } => {
-                        let decoded = decode_uri(ctx.uri);
+                        let decoded = decode(ctx.uri)?;
 
                         // verify the decoded URI contains the name as a query param
                         if !is_valid_quoted_string(&decoded) || !decoded.contains(name) {

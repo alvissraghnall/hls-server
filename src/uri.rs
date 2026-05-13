@@ -1,6 +1,8 @@
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
+use crate::error::{ParseError, ValidationError};
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Uri {
     scheme: String,
@@ -181,7 +183,7 @@ fn encode(input: &str) -> String {
 }
 
 /// decodes a percent-encoded string.
-fn decode(input: &str) -> Result<String, UriError> {
+pub(crate) fn decode(input: &str) -> Result<String, UriError> {
     let mut result = Vec::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
