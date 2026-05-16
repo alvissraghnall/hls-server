@@ -1,6 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone as _, Utc};
 
-use crate::{attribute_list::{AttributeList, parse_attribute_list}, error::ParseError, uri::Uri};
+use crate::{
+    attribute_list::{AttributeList, parse_attribute_list},
+    error::ParseError,
+    uri::Uri,
+};
 
 pub(crate) struct MediaSegment {
     uri: String,
@@ -23,8 +27,8 @@ pub(crate) struct ByteRange {
 }
 
 pub(crate) struct Map {
-    uri: String,
-    byte_range: ByteRange,
+    uri: Uri,
+    byte_range: Option<ByteRange>,
 }
 
 pub(crate) struct Key {
@@ -53,12 +57,20 @@ struct ParserState {
     current_uri: Option<String>,
 }
 
+struct PartialSegment {
+    uri: Uri,
+    duration: f64,
+    independent: Option<bool>,
+    byte_range: ByteRange,
+    gap: bool,
+}
+
 struct PendingSegment {
     duration: Option<f32>, // compulsory // should be int for compat v < 3
     title: Option<String>,
     byte_range: Option<ByteRange>,
     discontinuity: bool,
-    program_date_time: Option<DateTime<Utc>>,
+    program_date_time: Option<DateTime<FixedOffset>>,
     gap: bool,
     bitrate: Option<u64>,
     part: Option<AttributeList>,
@@ -143,15 +155,19 @@ impl PendingSegment {
                 self.duration = Some(duration);
                 self.title = title;
             }
-            tag if tag.starts_with("#EXT-X-BYTERANGE") => {
-                let byterange = tag["#EXT-X-BYTERANGE:".len()..].splitn(2, '@').collect::<Vec<_>>();
+            tag if tag.starts_with("#EXT-X-BYTERANGE:") => {
+                let byterange = tag["#EXT-X-BYTERANGE:".len()..]
+                    .splitn(2, '@')
+                    .collect::<Vec<_>>();
                 let len = byterange[0]
                     .parse::<u64>()
                     .map_err(|_| ParseError::InvalidLine(line.to_string()))?;
                 let offset = if byterange.len() == 2 {
-                    Some(byterange[1]
-                        .parse::<u64>()
-                        .map_err(|_| ParseError::InvalidLine(line.to_string()))?)
+                    Some(
+                        byterange[1]
+                            .parse::<u64>()
+                            .map_err(|_| ParseError::InvalidLine(line.to_string()))?,
+                    )
                 } else {
                     None
                 };
@@ -160,12 +176,33 @@ impl PendingSegment {
             tag if tag.starts_with("#EXT-X-DISCONTINUITY") => {
                 self.discontinuity = true;
             }
-            tag if tag.starts_with("#EXT-X-KEY") => {
+            tag if tag.starts_with("#EXT-X-KEY:") => {
                 let attr_str = &tag["#EXT-X-KEY:".len()..];
                 let attrs = parse_attribute_list(attr_str)?;
                 let key = Key::try_from(attrs)?;
                 self.key = Some(key);
             }
+            tag if tag.starts_with("#EXT-X-MAP:") => {
+                let attr_str = &tag["#EXT-X-MAP:".len()..];
+                let attrs = parse_attribute_list(attr_str)?;
+
+                let map = Map::try_from(attrs)?;
+                self.map = Some(map);
+            }
+            tag if tag.starts_with("#EXT-X-PROGRAM-DATE-TIME:") => {
+                let datetime_str = &tag["#EXT-X-PROGRAM-DATE-TIME:".len()..];
+                let datetime = parse__datetime(datetime_str)
+                    .map_err(|_| ParseError::InvalidLine(line.to_string()))?;
+                self.program_date_time = Some(datetime);
+            }
+            tag if tag.starts_with("#EXT-X-GAP") => self.gap = true,
+            tag if tag.starts_with("#EXT-X-BITRATE:") => {
+                let bitrate = tag["#EXT-X-BITRATE:".len()..]
+                    .parse::<u64>()
+                    .map_err(|_| ParseError::InvalidLine(line.to_string()))?;
+                self.bitrate = Some(bitrate)
+            }
+            tag if tag.starts_with("#EXT-X-PART:") => {}
             _ => return Err(ParseError::InvalidLine(line.to_string())),
         }
 
@@ -219,9 +256,7 @@ impl TryFrom<AttributeList> for Key {
             .and_then(|v| v.as_quoted_string())
             .ok_or_else(|| ParseError::NoAttribute)?;
 
-        let iv = value
-            .get("IV")
-            .and_then(|v| v.as_hex_sequence());
+        let iv = value.get("IV").and_then(|v| v.as_hex_sequence());
 
         let key_format = value
             .get("KEYFORMAT")
@@ -244,4 +279,130 @@ impl TryFrom<AttributeList> for Key {
             key_format_versions,
         })
     }
+}
+
+impl TryFrom<AttributeList> for Map {
+    type Error = ParseError;
+
+    fn try_from(value: AttributeList) -> Result<Self, Self::Error> {
+        let uri = value
+            .get("URI")
+            .and_then(|v| v.as_quoted_string())
+            .ok_or_else(|| ParseError::NoAttribute)?;
+
+        let byte_range = if let Some(br) = value.get("BYTERANGE") {
+            let br_str = br.as_quoted_string().ok_or_else(|| {
+                ParseError::InvalidAttributeValue("BYTERANGE must be a quoted string".to_string())
+            })?;
+            let parts: Vec<&str> = br_str.split('@').collect();
+
+            if parts.len() != 2 {
+                return Err(ParseError::InvalidAttributeValue(String::from(
+                    "BYTERANGE must be in the format 'length@offset'",
+                )));
+            }
+            let len = parts[0].parse::<u64>().map_err(|_| {
+                ParseError::InvalidAttributeValue(
+                    "Invalid BYTERANGE length at EXT-X-MAP".to_string(),
+                )
+            })?;
+
+            let offset = parts[1].parse::<u64>().map_err(|_| {
+                ParseError::InvalidAttributeValue(
+                    "Invalid BYTERANGE offset at EXT-X-MAP".to_string(),
+                )
+            })?;
+
+            Some(ByteRange {
+                len,
+                offset: Some(offset),
+            }) // offset always has value
+        } else {
+            None
+        };
+
+        Ok(Map {
+            uri: uri.into(),
+            byte_range,
+        })
+    }
+}
+
+impl TryFrom<AttributeList> for PartialSegment {
+    type Error = ParseError;
+
+    fn try_from(value: AttributeList) -> Result<Self, Self::Error> {
+        let uri: Uri = value
+            .get("URI")
+            .and_then(|v| v.as_quoted_string())
+            .map(|v| v.into())
+            .ok_or(ParseError::InvalidAttributeValue(String::from("URI")))?;
+
+        let duration = value
+            .get("DURATION")
+            .and_then(|v| v.as_decimal_floating_point())
+            .ok_or(ParseError::InvalidAttributeValue(String::from("DURATION")))?;
+
+        let independent = value.get("INDEPENDENT").and_then(|v| {
+            if v.as_enumerated_string() == Some("YES") {
+                Some(true)
+            } else {
+                None
+            }
+        });
+        let gap = value
+            .get("GAP")
+            .and_then(|v| v.as_enumerated_string())
+            .map(|v| v == "YES")
+            .unwrap_or(false);
+        let byte_range = if let Some(br) = value.get("BYTERANGE") {
+            let parts = br
+                .as_quoted_string()
+                .ok_or(ParseError::ExpectedQuotedString)?
+                .splitn(2, '@')
+                .collect::<Vec<_>>();
+            let len = parts[0].parse::<u64>().map_err(|_| {
+                ParseError::InvalidAttributeValue(
+                    "Invalid BYTERANGE length at EXT-X-MAP".to_string(),
+                )
+            })?;
+            let offset = if parts.len() == 2 {
+                Some(parts[1].parse::<u64>().map_err(|_| {
+                    ParseError::InvalidAttributeValue(
+                        "Invalid BYTERANGE length at EXT-X-MAP".to_string(),
+                    )
+                })?)
+            } else {
+                None
+            };
+
+            ByteRange { len, offset }
+        } else {
+            return Err(ParseError::InvalidAttributeDefinition(String::from(
+                "BYTERANGE",
+            )));
+        };
+
+        Ok(PartialSegment {
+            byte_range,
+            duration,
+            gap,
+            independent,
+            uri,
+        })
+    }
+}
+
+fn parse__datetime(input: &str) -> Result<DateTime<FixedOffset>, chrono::ParseError> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(input) {
+        return Ok(dt);
+    }
+    if let Ok(dt) = DateTime::parse_from_str(input, "%Y-%m-%dT%H:%M:%S%.3f%:z") {
+        return Ok(dt);
+    }
+
+    // if no timezone parse as naive and make UTC (+00:00)
+    let naive = NaiveDateTime::parse_from_str(input, "%Y-%m-%dT%H:%M:%S%.3f")?;
+    let utc_offset = FixedOffset::east_opt(0).unwrap();
+    Ok(utc_offset.from_utc_datetime(&naive))
 }

@@ -195,14 +195,13 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
 
         "BYTERANGE" => {
             let value = parse_quoted_string(value)?;
-            let parts: Vec<&str> = value.split('@').collect();
-            if parts.len() != 2 {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
-            }
-            let length = parts[0].parse::<u64>()?;
-            let offset = parts[1].parse::<u64>()?;
-            Ok(AttributeValue::DecimalInteger(length + offset)) // store the end byte
+            Ok(AttributeValue::QuotedString(value))
         }
+
+        "DURATION" => Ok(AttributeValue::DecimalFloatingPoint(value.parse()?)),
+        "INDEPENDENT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "GAP" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        
         _ => Err(ParseError::UnknownAttribute(name.into())),
     }
 }
