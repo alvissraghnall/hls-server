@@ -16,6 +16,7 @@ pub enum ParseError {
     MediaSequenceAfterSegment,
     InvalidEnumeratedString(String),
     InvalidDecimalResolution(String),
+    InvalidHexSequence(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -53,6 +54,7 @@ impl std::fmt::Display for ParseError {
                 write!(f, "Invalid attribute definition: {str}")
             }
             ParseError::NoAttribute => write!(f, "No attribute"),
+            ParseError::InvalidHexSequence(str) => write!(f, "Invalid hex sequence: {str}"),
             ParseError::TooManyAttributes => write!(f, "Too many attributes than required."),
             ParseError::MediaSequenceAfterSegment => write!(f, "Media sequence after segment"),
             ParseError::InvalidEnumeratedString(str) => write!(f, "Invalid enumerated string: {str}"),

@@ -34,7 +34,7 @@ pub(crate) struct Map {
 pub(crate) struct Key {
     method: Method,
     uri: Uri,
-    iv: Option<u128>,
+    iv: Option<Vec<u8>>,
     key_format: Option<String>,
     key_format_versions: Option<Vec<u16>>,
 }
@@ -274,7 +274,7 @@ impl TryFrom<AttributeList> for Key {
         Ok(Key {
             method: method_enum,
             uri: uri.into(),
-            iv,
+            iv: iv.map(|v| v.to_owned()),
             key_format,
             key_format_versions,
         })

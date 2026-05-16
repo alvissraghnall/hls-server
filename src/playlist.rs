@@ -1,4 +1,8 @@
-use crate::{attribute_list::AttributeList, error::ParseError};
+use std::collections::HashMap;
+
+use chrono::{Date, DateTime, FixedOffset};
+
+use crate::{attribute_list::{AttributeList, AttributeValue}, error::ParseError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SharedTag {
@@ -16,11 +20,25 @@ pub(crate) enum PlayListVariableDefinition {
 }
 
 struct MediaMetadata {
-    daterange: Vec<AttributeList>,
+    daterange: DateRange,
     skip: Vec<AttributeList>,
     preload_hint: Vec<AttributeList>,
     rendition_report: Option<AttributeList>,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DateRange {
+    id: String,
+    class: Option<String>,
+    start_date: DateTime<FixedOffset>,
+    end_date: Option<DateTime<FixedOffset>>,
+    duration: Option<f64>,
+    planned_duration: Option<f64>,
+    end_on_next: bool,
+    
+    extensions: HashMap<String, AttributeValue>,
+}
+
 
 impl Default for SharedTag {
     fn default() -> Self {
@@ -109,6 +127,35 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
         }
 
         Err(ParseError::NoAttribute)
+    }
+}
+
+impl TryFrom<AttributeList> for DateRange {
+    type Error = ParseError;
+
+    fn try_from(mut map: AttributeList) -> Result<Self, Self::Error> {
+        let id = map
+            .remove("ID")
+            .ok_or(ParseError::InvalidAttributeValue("ID".to_string()))?
+            .as_quoted_string()
+            .ok_or(ParseError::ExpectedQuotedString)?
+            .to_string();
+
+        let class = match map.remove("CLASS") {
+            Some(val) => Some(
+                val.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)?
+                    .to_string(),
+            ),
+            None => None,
+        };
+
+        // let start_date = map.remove("START-DATE")
+        //     .ok_or(ParseError::InvalidAttributeValue("START-DATE".to_string()))?
+        //     .as_quoted_string()
+        //     .
+
+        Err(ParseError::UnknownAttribute("ID".to_string()))
     }
 }
 

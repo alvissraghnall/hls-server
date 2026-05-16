@@ -1,4 +1,7 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
 use crate::{error::ParseError, playlist::PlayListVariableDefinition};
 
@@ -53,10 +56,10 @@ pub(crate) enum AttributeValue {
     DecimalInteger(u64),
     DecimalFloatingPoint(f64),
     SignedDecimalFloatingPoint(f64),
-    HexSequence(u128),
+    HexSequence(Vec<u8>),
     QuotedString(String),
     EnumeratedString(String),
-    EnumeratedStringList(Vec<String>),
+    EnumeratedStringList(HashSet<String>),
     DecimalResolution { width: u64, height: u64 },
 }
 
@@ -69,10 +72,11 @@ impl ToString for AttributeValue {
             Self::SignedDecimalFloatingPoint(x) => x.to_string(),
             Self::DecimalInteger(x) => x.to_string(),
             Self::DecimalFloatingPoint(x) => x.to_string(),
-            Self::HexSequence(x) => x.to_string(),
+            Self::HexSequence(x) => format!("0x{}", hex::encode(x)),
             Self::QuotedString(x) => x.to_string(),
             Self::EnumeratedString(x) => x.to_string(),
-            Self::EnumeratedStringList(x) => x.join(",").to_string(),
+            // hmmmmmmmmmm [ `clone` ]
+            Self::EnumeratedStringList(x) => x.iter().cloned().collect::<Vec<String>>().join(","),
             Self::DecimalResolution { width, height } => format!("{}x{}", width, height),
         }
     }
@@ -107,14 +111,14 @@ impl AttributeValue {
         }
     }
 
-    pub(crate) fn as_hex_sequence(&self) -> Option<u128> {
+    pub(crate) fn as_hex_sequence(&self) -> Option<&Vec<u8>> {
         match self {
-            Self::HexSequence(s) => Some(*s),
+            Self::HexSequence(s) => Some(s),
             _ => None,
         }
     }
 
-    pub(crate) fn as_enumerated_string_list(&self) -> Option<&[String]> {
+    pub(crate) fn as_enumerated_string_list(&self) -> Option<&HashSet<String>> {
         match self {
             Self::EnumeratedStringList(list) => Some(list),
             _ => None,
@@ -199,9 +203,29 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         }
 
         "DURATION" => Ok(AttributeValue::DecimalFloatingPoint(value.parse()?)),
-        "INDEPENDENT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
-        "GAP" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "INDEPENDENT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
+            value,
+        )?)),
+        "GAP" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
+            value,
+        )?)),
+
+        "ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "CLASS" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "START-DATE" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "END-DATE" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "CUE" => Ok(AttributeValue::EnumeratedStringList(
+            parse_enumerated_string_list(value)?,
+        )),
+        "PLANNED-DURATION" => Ok(AttributeValue::DecimalFloatingPoint(value.parse()?)),
+        "END-ON-NEXT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
+            value,
+        )?)),
         
+        "SCTE35-CMD" => Ok(AttributeValue::HexSequence(parse_hex_sequence(value)?)),
+        "SCTE35-OUT" => Ok(AttributeValue::HexSequence(parse_hex_sequence(value)?)),
+        "SCTE35-IN" => Ok(AttributeValue::HexSequence(parse_hex_sequence(value)?)),
+
         _ => Err(ParseError::UnknownAttribute(name.into())),
     }
 }
@@ -254,7 +278,15 @@ pub(crate) fn parse_enumerated_string(value: &str) -> Result<String, ParseError>
     Ok(value.to_string())
 }
 
-// nid a secomd look
+pub(crate) fn parse_enumerated_string_list(value: &str) -> Result<HashSet<String>, ParseError> {
+    let items: HashSet<String> = parse_quoted_string(value)?
+        .split(',')
+        .map(|s| parse_enumerated_string(s))
+        .collect::<Result<HashSet<String>, ParseError>>()?;
+    Ok(items)
+}
+
+// nid a second look
 pub(crate) fn parse_decimal_resolution(value: &str) -> Result<(u64, u64), ParseError> {
     let parts: Vec<&str> = value.split('x').collect();
     if parts.len() != 2 {
@@ -265,7 +297,12 @@ pub(crate) fn parse_decimal_resolution(value: &str) -> Result<(u64, u64), ParseE
     Ok((width, height))
 }
 
-pub(crate) fn parse_hex_sequence(value: &str) -> Result<u128, ParseError> {
+pub(crate) fn parse_hex_sequence(value: &str) -> Result<Vec<u8>, ParseError> {
+    if !value.starts_with("0x") {
+        return Err(ParseError::InvalidHexSequence(value.to_string()));
+    }
     let parsed = value.trim_start_matches("0x");
-    Ok(u128::from_str_radix(parsed, 16)?)
+    let bytes =
+        hex::decode(parsed).map_err(|_| ParseError::InvalidHexSequence(String::from(value)))?;
+    Ok(bytes)
 }
