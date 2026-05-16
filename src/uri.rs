@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
-use crate::error::{ParseError, ValidationError};
+use crate::error::{ParseError, UriError, ValidationError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Uri {
@@ -30,47 +30,87 @@ impl Uri {
     }
 
     pub fn parse(s: &str) -> Result<Self, UriError> {
-        let (scheme, rest) = s.split_once(':').ok_or(UriError::MissingScheme)?;
-        if !rest.starts_with("//") {
-            return Err(UriError::MissingAuthoritySeparator);
+        fn split_path_query_fragment(input: &str) -> (String, Option<String>, Option<String>) {
+            let path_end = input.find(|c| c == '?' || c == '#').unwrap_or(input.len());
+            let path = input[..path_end].to_string();
+            let rest = &input[path_end..];
+
+            match rest.chars().next() {
+                Some('?') => {
+                    let rest = &rest[1..];
+                    let (q, f) = rest.split_once('#').unwrap_or((rest, ""));
+                    (
+                        path,
+                        Some(q.to_string()),
+                        if f.is_empty() {
+                            None
+                        } else {
+                            Some(f.to_string())
+                        },
+                    )
+                }
+                Some('#') => {
+                    let f = &rest[1..];
+                    (path, None, Some(f.to_string()))
+                }
+                _ => (path, None, None),
+            }
         }
-        let rest = &rest[2..];
 
-        let (authority, rest) = rest.split_once('/').unwrap_or((rest, ""));
-        let authority = if authority.is_empty() {
-            None
-        } else {
-            Some(authority.to_string())
-        };
+        if let Some(rest) = s.strip_prefix("//") {
+            let (authority, remainder) = rest.split_once('/').unwrap_or((rest, ""));
+            let authority = if authority.is_empty() {
+                None
+            } else {
+                Some(authority.to_string())
+            };
+            let (path, query, fragment) = split_path_query_fragment(remainder);
+            let displayed_path = if path.is_empty() {
+                String::new()
+            } else {
+                format!("/{}", path)
+            };
 
-        let path_end = rest.find(|c| c == '?' || c == '#').unwrap_or(rest.len());
-        let path = &rest[..path_end];
-        let rest = &rest[path_end..];
+            return Ok(Uri {
+                scheme: String::new(),
+                authority,
+                path: displayed_path,
+                query,
+                fragment,
+            });
+        }
 
-        let (query, fragment) = match rest.chars().next() {
-            Some('?') => {
-                let rest = &rest[1..];
-                let (q, f) = rest.split_once('#').unwrap_or((rest, ""));
-                (
-                    Some(q.to_string()),
-                    if f.is_empty() {
-                        None
-                    } else {
-                        Some(f.to_string())
-                    },
-                )
+        if let Some((scheme, rest)) = s.split_once(':') {
+            if rest.starts_with("//") {
+                let rest = &rest[2..];
+                let (authority, remainder) = rest.split_once('/').unwrap_or((rest, ""));
+                let authority = if authority.is_empty() {
+                    None
+                } else {
+                    Some(authority.to_string())
+                };
+                let (path, query, fragment) = split_path_query_fragment(remainder);
+                let displayed_path = if path.is_empty() {
+                    String::new()
+                } else {
+                    format!("/{}", path)
+                };
+
+                return Ok(Uri {
+                    scheme: scheme.to_string(),
+                    authority,
+                    path: displayed_path,
+                    query,
+                    fragment,
+                });
             }
-            Some('#') => {
-                let f = &rest[1..];
-                (None, Some(f.to_string()))
-            }
-            _ => (None, None),
-        };
+        }
 
+        let (path, query, fragment) = split_path_query_fragment(s);
         Ok(Uri {
-            scheme: scheme.to_string(),
-            authority,
-            path: path.to_string(),
+            scheme: String::new(),
+            authority: None,
+            path,
             query,
             fragment,
         })
@@ -140,7 +180,9 @@ impl Uri {
 
 impl Display for Uri {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:", self.scheme)?;
+        if !self.scheme.is_empty() {
+            write!(f, "{}:", self.scheme)?;
+        }
         if let Some(ref auth) = self.authority {
             write!(f, "//{}", auth)?;
         }
@@ -163,8 +205,14 @@ impl FromStr for Uri {
     }
 }
 
+impl Into<Uri> for &str {
+    fn into(self) -> Uri {
+        Uri::parse(&self).unwrap()
+    }
+}
+
 fn is_unreserved(b: u8) -> bool {
-    matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~')
+    matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/')
 }
 
 /// encodes a string by replacing non-unreserved characters with %XX sequences.
@@ -224,31 +272,6 @@ fn hex_to_int(b: u8) -> Result<u8, UriError> {
         _ => Err(UriError::InvalidPercentEncoding),
     }
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UriError {
-    MissingScheme,
-    MissingAuthoritySeparator,
-    InvalidFormat,
-    InvalidPercentEncoding,
-    InvalidUtf8,
-}
-
-impl Display for UriError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            UriError::MissingScheme => write!(f, "URI missing scheme"),
-            UriError::MissingAuthoritySeparator => {
-                write!(f, "URI missing '//' after scheme")
-            }
-            UriError::InvalidFormat => write!(f, "URI has invalid format"),
-            UriError::InvalidPercentEncoding => write!(f, "Invalid percent-encoded sequence"),
-            UriError::InvalidUtf8 => write!(f, "Decoded bytes are not valid UTF-8"),
-        }
-    }
-}
-
-impl std::error::Error for UriError {}
 
 #[cfg(test)]
 mod tests {
@@ -310,5 +333,36 @@ mod tests {
             None,
         );
         assert_eq!(uri_safe.to_string(), "https://docs.rs/a%20b");
+    }
+
+    #[test]
+    fn test_parse_relative_path() {
+        let uri = Uri::parse("segment.ts").unwrap();
+        assert_eq!(uri.scheme(), "");
+        assert_eq!(uri.authority(), None);
+        assert_eq!(uri.path(), "segment.ts");
+        assert_eq!(uri.query(), None);
+        assert_eq!(uri.fragment(), None);
+        assert_eq!(uri.to_string(), "segment.ts");
+    }
+
+    #[test]
+    fn test_parse_relative_query_fragment() {
+        let uri = Uri::parse("../video.ts?foo=bar#frag").unwrap();
+        assert_eq!(uri.scheme(), "");
+        assert_eq!(uri.authority(), None);
+        assert_eq!(uri.path(), "../video.ts");
+        assert_eq!(uri.query(), Some("foo=bar"));
+        assert_eq!(uri.fragment(), Some("frag"));
+        assert_eq!(uri.to_string(), "../video.ts?foo=bar#frag");
+    }
+
+    #[test]
+    fn test_parse_network_path_reference() {
+        let uri = Uri::parse("//docs.rs/path").unwrap();
+        assert_eq!(uri.scheme(), "");
+        assert_eq!(uri.authority(), Some("docs.rs"));
+        assert_eq!(uri.path(), "/path");
+        assert_eq!(uri.to_string(), "//docs.rs/path");
     }
 }

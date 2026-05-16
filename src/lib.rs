@@ -14,6 +14,7 @@ mod playlist;
 mod segment;
 mod shared;
 mod uri;
+mod key;
 
 /**
  *

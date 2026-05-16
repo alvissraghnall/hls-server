@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::{attribute_list::AttributeList, error::ParseError};
+use crate::{attribute_list::{AttributeList, parse_attribute_list}, error::ParseError, uri::Uri};
 
 pub(crate) struct MediaSegment {
     uri: String,
@@ -29,12 +29,13 @@ pub(crate) struct Map {
 
 pub(crate) struct Key {
     method: Method,
-    uri: String,
+    uri: Uri,
     iv: Option<u128>,
     key_format: Option<String>,
     key_format_versions: Option<Vec<u16>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum Method {
     None,
     Aes128,
@@ -61,6 +62,8 @@ struct PendingSegment {
     gap: bool,
     bitrate: Option<u64>,
     part: Option<AttributeList>,
+    key: Option<Key>, // ????????????????
+    map: Option<Map>,
 }
 
 impl MediaSegment {
@@ -111,6 +114,8 @@ impl PendingSegment {
             gap: false,
             bitrate: None,
             part: None,
+            key: None,
+            map: None,
         }
     }
 
@@ -155,6 +160,12 @@ impl PendingSegment {
             tag if tag.starts_with("#EXT-X-DISCONTINUITY") => {
                 self.discontinuity = true;
             }
+            tag if tag.starts_with("#EXT-X-KEY") => {
+                let attr_str = &tag["#EXT-X-KEY:".len()..];
+                let attrs = parse_attribute_list(attr_str)?;
+                let key = Key::try_from(attrs)?;
+                self.key = Some(key);
+            }
             _ => return Err(ParseError::InvalidLine(line.to_string())),
         }
 
@@ -178,5 +189,59 @@ impl ParserState {
 impl Default for ParserState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl TryFrom<AttributeList> for Key {
+    type Error = ParseError;
+
+    fn try_from(value: AttributeList) -> Result<Self, Self::Error> {
+        let method = value
+            .get("METHOD")
+            .and_then(|v| v.as_enumerated_string())
+            .ok_or_else(|| ParseError::NoAttribute)?;
+
+        let method_enum = match method {
+            "NONE" => Method::None,
+            "AES-128" => Method::Aes128,
+            "SAMPLE-AES" => Method::SampleAes,
+            "SAMPLE-AES-CTR" => Method::SampleAesCtr,
+            "AES-256-GCM" => Method::Aes256Gcm,
+            _ => return Err(ParseError::InvalidAttributeValue(method.to_string())),
+        };
+
+        if method_enum == Method::None && value.len() > 1 {
+            return Err(ParseError::TooManyAttributes);
+        }
+
+        let uri = value
+            .get("URI")
+            .and_then(|v| v.as_quoted_string())
+            .ok_or_else(|| ParseError::NoAttribute)?;
+
+        let iv = value
+            .get("IV")
+            .and_then(|v| v.as_hex_sequence());
+
+        let key_format = value
+            .get("KEYFORMAT")
+            .and_then(|v| v.as_quoted_string().map(str::to_owned));
+
+        let key_format_versions = value
+            .get("KEYFORMATVERSIONS")
+            .and_then(|v| v.as_quoted_string())
+            .map(|s| {
+                s.split('/')
+                    .filter_map(|part| part.parse::<u16>().ok())
+                    .collect::<Vec<u16>>()
+            });
+
+        Ok(Key {
+            method: method_enum,
+            uri: uri.into(),
+            iv,
+            key_format,
+            key_format_versions,
+        })
     }
 }

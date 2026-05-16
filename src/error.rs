@@ -1,4 +1,5 @@
-use crate::uri::UriError;
+use core::fmt;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
@@ -13,6 +14,8 @@ pub enum ParseError {
     TooManyAttributes,
     InvalidAttributeDefinition(String),
     MediaSequenceAfterSegment,
+    InvalidEnumeratedString(String),
+    InvalidDecimalResolution(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -22,6 +25,16 @@ pub(crate) enum ValidationError {
     InvalidUri,
     InvalidMultivariantAttribute,
     InvalidTargetDuration,
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UriError {
+    MissingScheme,
+    MissingAuthoritySeparator,
+    InvalidFormat,
+    InvalidPercentEncoding,
+    InvalidUtf8,
 }
 
 impl std::fmt::Display for ParseError {
@@ -42,6 +55,8 @@ impl std::fmt::Display for ParseError {
             ParseError::NoAttribute => write!(f, "No attribute"),
             ParseError::TooManyAttributes => write!(f, "Too many attributes than required."),
             ParseError::MediaSequenceAfterSegment => write!(f, "Media sequence after segment"),
+            ParseError::InvalidEnumeratedString(str) => write!(f, "Invalid enumerated string: {str}"),
+            ParseError::InvalidDecimalResolution(str) => write!(f, "Invalid decimal resolution: {str}"),
         }
     }
 }
@@ -86,3 +101,20 @@ impl From<UriError> for ValidationError {
         ValidationError::InvalidUri
     }
 }
+
+
+impl Display for UriError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            UriError::MissingScheme => write!(f, "URI missing scheme"),
+            UriError::MissingAuthoritySeparator => {
+                write!(f, "URI missing '//' after scheme")
+            }
+            UriError::InvalidFormat => write!(f, "URI has invalid format"),
+            UriError::InvalidPercentEncoding => write!(f, "Invalid percent-encoded sequence"),
+            UriError::InvalidUtf8 => write!(f, "Decoded bytes are not valid UTF-8"),
+        }
+    }
+}
+
+impl std::error::Error for UriError {}
