@@ -61,6 +61,7 @@ pub(crate) enum AttributeValue {
     EnumeratedString(String),
     EnumeratedStringList(HashSet<String>),
     DecimalResolution { width: u64, height: u64 },
+    XAttribute(String, Box<AttributeValue>),
 }
 
 // The actual data structure
@@ -78,6 +79,7 @@ impl ToString for AttributeValue {
             // hmmmmmmmmmm [ `clone` ]
             Self::EnumeratedStringList(x) => x.iter().cloned().collect::<Vec<String>>().join(","),
             Self::DecimalResolution { width, height } => format!("{}x{}", width, height),
+            Self::XAttribute(name, value) => format!("{}={}", name, value.to_string()),
         }
     }
 }
@@ -124,6 +126,15 @@ impl AttributeValue {
             _ => None,
         }
     }
+
+    pub(crate) fn as_decimal_integer(&self) -> Option<u64> {
+        match self {
+            Self::DecimalInteger(x) => Some(*x),
+            _ => None,
+        }
+    }
+
+
 }
 
 fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, ParseError> {
@@ -221,10 +232,39 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "END-ON-NEXT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
             value,
         )?)),
-        
+
+        x if x.starts_with("X-") => {
+            let parsed = parse_quoted_string(value).map_or_else(
+                |e| {
+                    parse_hex_sequence(value)
+                        .map(|bytes| AttributeValue::HexSequence(bytes))
+                        .or_else(|_| {
+                            value
+                                .parse::<f64>()
+                                .map(AttributeValue::SignedDecimalFloatingPoint)
+                        })
+                },
+                |s| Ok(AttributeValue::QuotedString(s)),
+            )?;
+            Ok(AttributeValue::XAttribute(x.to_string(), Box::new(parsed)))
+        }
+
         "SCTE35-CMD" => Ok(AttributeValue::HexSequence(parse_hex_sequence(value)?)),
         "SCTE35-OUT" => Ok(AttributeValue::HexSequence(parse_hex_sequence(value)?)),
         "SCTE35-IN" => Ok(AttributeValue::HexSequence(parse_hex_sequence(value)?)),
+
+        "SKIPPED-SEGMENTS" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
+        "RECENTLY-REMOVED-DATERANGES" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+
+        "TYPE" => {
+            let parsed = parse_enumerated_string(value)?;
+            Ok(AttributeValue::EnumeratedString(parsed))
+        }
+        "BYTERANGE-START" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
+        "BYTERANGE-LENGTH" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
+        
+        "LAST-MSN" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
+        "LAST-PART" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
 
         _ => Err(ParseError::UnknownAttribute(name.into())),
     }

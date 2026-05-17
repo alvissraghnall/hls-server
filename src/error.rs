@@ -17,6 +17,7 @@ pub enum ParseError {
     InvalidEnumeratedString(String),
     InvalidDecimalResolution(String),
     InvalidHexSequence(String),
+    InvalidDateTime
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -57,6 +58,7 @@ impl std::fmt::Display for ParseError {
             ParseError::InvalidHexSequence(str) => write!(f, "Invalid hex sequence: {str}"),
             ParseError::TooManyAttributes => write!(f, "Too many attributes than required."),
             ParseError::MediaSequenceAfterSegment => write!(f, "Media sequence after segment"),
+            ParseError::InvalidDateTime => write!(f, "Invalid DateTime"),
             ParseError::InvalidEnumeratedString(str) => write!(f, "Invalid enumerated string: {str}"),
             ParseError::InvalidDecimalResolution(str) => write!(f, "Invalid decimal resolution: {str}"),
         }
@@ -78,6 +80,14 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidTargetDuration => write!(f, "Invalid target duration"),
             ValidationError::InvalidUri => write!(f, "Invalid URI"),
             
+        }
+    }
+}
+
+impl From<chrono::ParseError> for ParseError {
+    fn from(value: chrono::ParseError) -> Self {
+        match value.kind() {
+            _ => ParseError::InvalidDateTime,
         }
     }
 }

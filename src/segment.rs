@@ -191,7 +191,7 @@ impl PendingSegment {
             }
             tag if tag.starts_with("#EXT-X-PROGRAM-DATE-TIME:") => {
                 let datetime_str = &tag["#EXT-X-PROGRAM-DATE-TIME:".len()..];
-                let datetime = parse__datetime(datetime_str)
+                let datetime = parse_datetime(datetime_str)
                     .map_err(|_| ParseError::InvalidLine(line.to_string()))?;
                 self.program_date_time = Some(datetime);
             }
@@ -393,7 +393,7 @@ impl TryFrom<AttributeList> for PartialSegment {
     }
 }
 
-fn parse__datetime(input: &str) -> Result<DateTime<FixedOffset>, chrono::ParseError> {
+pub(crate) fn parse_datetime(input: &str) -> Result<DateTime<FixedOffset>, chrono::ParseError> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(input) {
         return Ok(dt);
     }

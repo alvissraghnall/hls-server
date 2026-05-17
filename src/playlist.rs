@@ -1,8 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
 use chrono::{Date, DateTime, FixedOffset};
 
-use crate::{attribute_list::{AttributeList, AttributeValue}, error::ParseError};
+use crate::{
+    attribute_list::{AttributeList, AttributeValue, parse_attribute_list},
+    error::ParseError,
+    segment::parse_datetime, uri::Uri,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SharedTag {
@@ -19,26 +23,61 @@ pub(crate) enum PlayListVariableDefinition {
     QueryParam { name: String, value: String },
 }
 
-struct MediaMetadata {
-    daterange: DateRange,
-    skip: Vec<AttributeList>,
-    preload_hint: Vec<AttributeList>,
-    rendition_report: Option<AttributeList>,
+#[derive(Debug, Clone, PartialEq)]
+pub enum MediaMetadata {
+    Daterange(DateRange),
+    Skip(Skip),
+    PreloadHint(PreloadHint),
+    RenditionReport(RenditionReport),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Skip {
+    skipped_segments: u64,
+    recently_removed_dateranges: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RenditionReport {
+    uri: Uri,
+    last_msn: u64,
+    last_part: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PreloadHint {
+    type_of: PreloadHintType,
+    uri: Uri,
+    byterange_start: u64,
+    byterange_length: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PreloadHintType {
+    Map,
+    Part,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DateRange {
     id: String,
     class: Option<String>,
-    start_date: DateTime<FixedOffset>,
+    start_date: Option<DateTime<FixedOffset>>,
+    cue: Vec<Cue>,
     end_date: Option<DateTime<FixedOffset>>,
     duration: Option<f64>,
     planned_duration: Option<f64>,
-    end_on_next: bool,
-    
+    end_on_next: Option<bool>,
+
     extensions: HashMap<String, AttributeValue>,
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+enum Cue {
+    Pre,
+    Post,
+    Once,
+}
 
 impl Default for SharedTag {
     fn default() -> Self {
@@ -130,6 +169,36 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
     }
 }
 
+impl MediaMetadata {
+
+    pub fn parse_line (line: &str) -> Result<Self, ParseError> {
+
+        match line {
+            l if l.starts_with("#EXT-X-DATERANGE:") => {
+                let content = &l["#EXT-X-DATERANGE:".len()..];
+                let attributes = parse_attribute_list(content)?;
+                Ok(MediaMetadata::Daterange(DateRange::try_from(attributes)?))
+            },
+            l if l.starts_with("#EXT-X-SKIP:") => {
+                let content = &l["#EXT-X-SKIP:".len()..];
+                let attributes = parse_attribute_list(content)?;
+                Ok(MediaMetadata::Skip(Skip::try_from(attributes)?))
+            },
+            l if l.starts_with("#EXT-X-PRELOAD-HINT:") => {
+                let content = &l["#EXT-X-PRELOAD-HINT:".len()..];
+                let attributes = parse_attribute_list(content)?;
+                Ok(MediaMetadata::PreloadHint(PreloadHint::try_from(attributes)?))
+            },
+            l if l.starts_with("#EXT-X-RENDITION-REPORT:") => {
+                let content = &l["#EXT-X-RENDITION-REPORT:".len()..];
+                let attributes = parse_attribute_list(content)?;
+                Ok(MediaMetadata::RenditionReport(RenditionReport::try_from(attributes)?))
+            },
+            _ => Err(ParseError::UnknownTag(line.to_string())),
+        }
+    }
+}
+
 impl TryFrom<AttributeList> for DateRange {
     type Error = ParseError;
 
@@ -141,21 +210,240 @@ impl TryFrom<AttributeList> for DateRange {
             .ok_or(ParseError::ExpectedQuotedString)?
             .to_string();
 
-        let class = match map.remove("CLASS") {
-            Some(val) => Some(
+        let class = map
+            .remove("CLASS")
+            .map(|val| {
                 val.as_quoted_string()
-                    .ok_or(ParseError::ExpectedQuotedString)?
-                    .to_string(),
-            ),
-            None => None,
-        };
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .map(|s| s.to_string())
+            })
+            .transpose()?;
 
-        // let start_date = map.remove("START-DATE")
-        //     .ok_or(ParseError::InvalidAttributeValue("START-DATE".to_string()))?
-        //     .as_quoted_string()
-        //     .
+        let start_date = map
+            .remove("START-DATE")
+            .map(|val| {
+                val.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|s| {
+                        parse_datetime(s).map_err(|_| {
+                            ParseError::InvalidAttributeValue("START-DATE".to_string())
+                        })
+                    })
+            })
+            .transpose()?;
 
-        Err(ParseError::UnknownAttribute("ID".to_string()))
+        let cue = map
+            .remove("CUE")
+            .map(|val| {
+                val.as_enumerated_string_list()
+                    .ok_or_else(|| ParseError::InvalidAttributeValue("CUE".into()))?
+                    .iter()
+                    .map(|x| Cue::from_str(x))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or(vec![]);
+
+        let end_date = map
+            .remove("END-DATE")
+            .map(|val| {
+                val.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|s| {
+                        parse_datetime(s)
+                            .map_err(|_| ParseError::InvalidAttributeValue("END-DATE".to_string()))
+                    })
+            })
+            .transpose()?;
+
+        let duration = map
+            .remove("DURATION")
+            .map(|val| {
+                val.as_decimal_floating_point()
+                    .ok_or(ParseError::InvalidAttributeValue("DURATION".to_string()))
+            })
+            .transpose()?;
+
+        let planned_duration = map
+            .remove("PLANNED-DURATION")
+            .map(|val| {
+                val.as_decimal_floating_point()
+                    .ok_or(ParseError::InvalidAttributeValue(
+                        "PLANNED-DURATION".to_string(),
+                    ))
+                    .and_then(|x| {
+                        if x < 0.0 {
+                            Err(ParseError::InvalidAttributeValue(
+                                "PLANNED-DURATION".to_string(),
+                            ))
+                        } else {
+                            Ok(x)
+                        }
+                    })
+            })
+            .transpose()?;
+
+        let x_attr = map
+            .iter().filter_map(|(k, v)| {
+                if k.starts_with("X-") {
+                    Some((k.to_string(), v.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect::<HashMap<_, _>>();
+
+        let end_on_next = map
+            .remove("END-ON-NEXT")
+            .map(|val| {
+                val.as_enumerated_string()
+                    .ok_or(ParseError::InvalidAttributeValue("END-ON-NEXT".to_string()))
+                    .map(|s| Some(s == "YES"))
+            })
+            .transpose()?
+            .unwrap_or(None);
+
+        // scte-35 curr unhandled.
+
+        Ok(Self {
+            id,
+            class,
+            start_date,
+            cue: cue,
+            end_date,
+            duration,
+            planned_duration,
+            end_on_next,
+            extensions: x_attr,
+        })
+
+        // Err(ParseError::UnknownAttribute("ID".to_string()))
+    }
+}
+
+impl FromStr for Cue {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "PRE" => Ok(Cue::Pre),
+            "POST" => Ok(Cue::Post),
+            "ONCE" => Ok(Cue::Once),
+            _ => Err(ParseError::InvalidAttributeValue(String::from("CUE"))),
+        }
+    }
+}
+
+impl TryInto<Cue> for AttributeValue {
+    type Error = ParseError;
+
+    fn try_into(self) -> Result<Cue, Self::Error> {
+        let list = self
+            .as_enumerated_string_list()
+            .ok_or(ParseError::InvalidAttributeValue(String::from("CUE")))?;
+
+        if let Some(v) = list.get("PRE") {
+            return Ok(Cue::Pre);
+        }
+
+        if let Some(v) = list.get("POST") {
+            return Ok(Cue::Post);
+        }
+
+        if let Some(v) = list.get("ONCE") {
+            return Ok(Cue::Once);
+        }
+
+        Err(ParseError::InvalidAttributeValue("CUE".to_string()))
+    }
+}
+
+impl TryFrom<AttributeList> for PreloadHint {
+    type Error = ParseError;
+
+    fn try_from(value: AttributeList) -> Result<Self, Self::Error> {
+        let type_of = value
+            .get("TYPE")
+            .and_then(|v| v.as_enumerated_string())
+            .ok_or(ParseError::InvalidAttributeValue("TYPE".to_string()))
+            .and_then(|s| match s {
+                "MAP" => Ok(PreloadHintType::Map),
+                "PART" => Ok(PreloadHintType::Part),
+                _ => Err(ParseError::InvalidAttributeValue("TYPE".to_string())),
+            })?;
+
+        let uri = value
+            .get("URI")
+            .and_then(|v| v.as_quoted_string())
+            .ok_or(ParseError::InvalidAttributeValue("URI".to_string()))
+            .and_then(|s| Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue("URI".to_string())))?;
+
+        let byterange_start = value
+            .get("BYTERANGE-START")
+            .and_then(|v| v.as_decimal_integer())
+            .unwrap_or(0);
+
+        let byterange_length = value
+            .get("BYTERANGE-LENGTH")
+            .and_then(|v| v.as_decimal_integer());
+
+        Ok(Self {
+            type_of,
+            uri,
+            byterange_start,
+            byterange_length,
+        })
+    }
+}
+
+impl TryFrom<AttributeList> for RenditionReport {
+    type Error = ParseError;
+
+    fn try_from(value: AttributeList) -> Result<Self, Self::Error> {
+        let uri = value
+            .get("URI")
+            .and_then(|v| v.as_quoted_string())
+            .ok_or(ParseError::InvalidAttributeValue("URI".to_string()))
+            .and_then(|s| Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue("URI".to_string())))?;
+
+        let last_msn = value
+            .get("LAST-MSN")
+            .and_then(|v| v.as_decimal_integer())
+            .ok_or(ParseError::InvalidAttributeValue("LAST-MSN".to_string()))?;
+
+        let last_part = value
+            .get("LAST-PART")
+            .and_then(|v| v.as_decimal_integer());
+
+        Ok(Self {
+            uri,
+            last_msn,
+            last_part,
+        })
+    }
+}
+
+impl TryFrom<AttributeList> for Skip {
+    type Error = ParseError;
+
+    fn try_from(value: AttributeList) -> Result<Self, Self::Error> {
+        
+        let skipped_segments = value
+            .get("SKIPPED-SEGMENTS")
+            .and_then(|v| v.as_decimal_integer())
+            .ok_or(ParseError::InvalidAttributeValue("SKIPPED-SEGMENTS".to_string()))?;
+
+        let recently_removed_dateranges = value
+            .get("RECENTLY-REMOVED-DATERANGES")
+            .and_then(|v| v.as_quoted_string())
+            .map(|s| s.split('\t').map(|s| s.trim().to_string()).collect())
+            .unwrap_or(vec![]);
+
+        Ok(Self {
+            skipped_segments,
+            recently_removed_dateranges,
+        })
+
     }
 }
 

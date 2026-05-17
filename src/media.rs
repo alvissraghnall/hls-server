@@ -365,10 +365,10 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
                 )))?;
             let attrs = parse_attribute_list(attrs)?;
 
-            Err(ParseError::InvalidLine(format!(
-                "{} is not valid according to HLS spec.",
-                line
-            )))
+            let server_control = ServerControl::try_from(attrs)?;
+
+            Ok(MediaExclusiveTag::ServerControl(server_control))
+            
         }
         _ => Err(ParseError::InvalidLine(line.to_string())),
     }
