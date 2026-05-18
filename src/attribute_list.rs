@@ -266,6 +266,26 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "LAST-MSN" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
         "LAST-PART" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
 
+        "GROUP-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "LANGUAGE" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "ASSOC-LANGUAGE" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "DEFAULT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "STABLE-RENDITION-ID" => {
+            let parsed = parse_quoted_string(value)?;
+            if !is_valid_stable_rendition_id(&parsed) {
+                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+            }
+            Ok(AttributeValue::QuotedString(parsed))
+        },
+        "AUTOSELECT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "FORCED" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "INSTREAM-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "BIT-DEPTH" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
+        "SAMPLE-RATE" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
+        "CHARACTERISTICS" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "CHANNELS" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        
+
         _ => Err(ParseError::UnknownAttribute(name.into())),
     }
 }
@@ -290,6 +310,12 @@ pub(crate) fn is_valid_ext_x_define(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+pub(crate) fn is_valid_stable_rendition_id (s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'.' || b == b'-' || b == b'_')
 }
 
 pub(crate) fn is_valid_ext_x_define_allow_empty(s: &str) -> bool {

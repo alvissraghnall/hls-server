@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
+    ExpectedEnumeratedString,
     InvalidLine(String),
     UnknownTag(String),
     DuplicateTag(String),
@@ -17,7 +18,8 @@ pub enum ParseError {
     InvalidEnumeratedString(String),
     InvalidDecimalResolution(String),
     InvalidHexSequence(String),
-    InvalidDateTime
+    InvalidDateTime,
+    ExpectedDecimalInteger,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -55,9 +57,11 @@ impl std::fmt::Display for ParseError {
                 write!(f, "Invalid attribute definition: {str}")
             }
             ParseError::NoAttribute => write!(f, "No attribute"),
+            ParseError::ExpectedEnumeratedString => write!(f, "Expected Enumerated-String"),
             ParseError::InvalidHexSequence(str) => write!(f, "Invalid hex sequence: {str}"),
             ParseError::TooManyAttributes => write!(f, "Too many attributes than required."),
             ParseError::MediaSequenceAfterSegment => write!(f, "Media sequence after segment"),
+            ParseError::ExpectedDecimalInteger => write!(f, "Expected decimal integer"),
             ParseError::InvalidDateTime => write!(f, "Invalid DateTime"),
             ParseError::InvalidEnumeratedString(str) => write!(f, "Invalid enumerated string: {str}"),
             ParseError::InvalidDecimalResolution(str) => write!(f, "Invalid decimal resolution: {str}"),
@@ -114,6 +118,11 @@ impl From<UriError> for ValidationError {
     }
 }
 
+impl From<UriError> for ParseError {
+    fn from(_: UriError) -> ParseError {
+        ParseError::InvalidAttributeValue("URI".to_string())
+    }
+}
 
 impl Display for UriError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

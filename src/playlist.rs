@@ -46,7 +46,7 @@ pub(crate) struct RenditionReport {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PreloadHint {
-    type_of: PreloadHintType,
+    hint_type: PreloadHintType,
     uri: Uri,
     byterange_start: u64,
     byterange_length: Option<u64>,
@@ -388,7 +388,7 @@ impl TryFrom<AttributeList> for PreloadHint {
             .and_then(|v| v.as_decimal_integer());
 
         Ok(Self {
-            type_of,
+            hint_type: type_of,
             uri,
             byterange_start,
             byterange_length,
