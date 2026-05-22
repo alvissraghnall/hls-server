@@ -1,7 +1,7 @@
 use std::{default, str::FromStr};
 
 use crate::{
-    attribute_list::{AttributeList, is_valid_ext_x_define as is_valid_quoted_string},
+    attribute_list::{AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list},
     error::{ParseError, ValidationError},
     playlist::{PlayListVariableDefinition, SharedTag},
     segment::Key,
@@ -44,12 +44,48 @@ pub struct MultivariantPlaylist {
 }
 
 pub(crate) enum MultivariantExclusiveTag {
-    Media(AttributeList),
+    Media(Media),
     StreamInf(AttributeList),
     IFrameStreamInf(AttributeList),
     SessionData(SessionData),
     SessionKey(Key),
     ContentSteering((String, Option<String>)), //server-uri / pathway-id
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct StreamInf {
+    bandwidth: u64,
+    average_bandwidth: Option<u64>,
+    score: Option<f64>,
+    codecs: Vec<String>,
+    supplemental_codecs: Vec<Vec<String>>,
+    resolution: Option<(u64, u64)>,
+    frame_rate: Option<f32>,
+    hdcp_level: Option<HdcpLevel>,
+    allowed_cpc: Vec<AllowedCpcEntry>,
+    video_range: VideoRange,
+
+}
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AllowedCpcEntry {
+    keyformat: String,
+    labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum VideoRange {
+    Sdr,
+    Hlg,
+    Pq
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum HdcpLevel {
+    Type0,
+    Type1,
+    None,
 }
 
 struct Media {
@@ -84,7 +120,6 @@ pub enum PublicMediaCharacteristic {
     EasyToRead,
     DescribesVideo,
     MachineGenerated,
-
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -257,6 +292,23 @@ impl MultivariantPlaylist {
     }
 }
 
+pub(crate) fn parse_multivariant_exclusive_tag(
+    line: &str,
+) -> Result<MultivariantExclusiveTag, ParseError> {
+    match line {
+        tag if tag.starts_with("#EXT-X-MEDIA:") => {
+            let attr_str = &tag["#EXT-X-MAP:".len()..];
+            let attrs = parse_attribute_list(attr_str)?;
+
+            let media = Media::try_from(attrs)?;
+
+            Ok(MultivariantExclusiveTag::Media(media))
+        }
+
+        _ => Err(ParseError::InvalidLine(line.to_string())),
+    }
+}
+
 impl TryFrom<AttributeList> for Media {
     type Error = ParseError;
 
@@ -392,7 +444,9 @@ impl TryFrom<AttributeList> for Media {
                                 ParseError::InvalidAttributeValue("INSTREAM-ID".to_string())
                             })
                         } else {
-                            if !x.is_empty() && x.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.') {
+                            if !x.is_empty()
+                                && x.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
+                            {
                                 Ok(InStreamId::Other(x.to_string()))
                             } else {
                                 Err(ParseError::InvalidAttributeValue("INSTREAM-ID".to_string()))
@@ -428,12 +482,27 @@ impl TryFrom<AttributeList> for Media {
                     .map(|x| {
                         x.split(',')
                             .map(|s| match s {
-                                "public.accessibility.describes-music-and-sound" => MediaCharacteristic::Public(PublicMediaCharacteristic::DescribesMusicAndSound),
-                                "public.easy-to-read" => MediaCharacteristic::Public(PublicMediaCharacteristic::EasyToRead),
-                                "public.accessibility.transcribes-spoken-dialog" => MediaCharacteristic::Public(PublicMediaCharacteristic::TranscribesSpokenDialog),
-                                "public.accessibility.describes-video" => MediaCharacteristic::Public(PublicMediaCharacteristic::DescribesVideo),
-                                "public.machine-generated" => MediaCharacteristic::Public(PublicMediaCharacteristic::MachineGenerated),
-
+                                "public.accessibility.describes-music-and-sound" => {
+                                    MediaCharacteristic::Public(
+                                        PublicMediaCharacteristic::DescribesMusicAndSound,
+                                    )
+                                }
+                                "public.easy-to-read" => MediaCharacteristic::Public(
+                                    PublicMediaCharacteristic::EasyToRead,
+                                ),
+                                "public.accessibility.transcribes-spoken-dialog" => {
+                                    MediaCharacteristic::Public(
+                                        PublicMediaCharacteristic::TranscribesSpokenDialog,
+                                    )
+                                }
+                                "public.accessibility.describes-video" => {
+                                    MediaCharacteristic::Public(
+                                        PublicMediaCharacteristic::DescribesVideo,
+                                    )
+                                }
+                                "public.machine-generated" => MediaCharacteristic::Public(
+                                    PublicMediaCharacteristic::MachineGenerated,
+                                ),
 
                                 _ => MediaCharacteristic::Private(s.to_string()),
                             })
@@ -455,8 +524,9 @@ impl TryFrom<AttributeList> for Media {
                             .next()
                             .ok_or(ParseError::InvalidAttributeValue("CHANNELS".to_string()))
                             .and_then(|x| {
-                                x.parse::<u64>()
-                                    .map_err(|_| ParseError::InvalidAttributeValue("CHANNELS".to_string()))
+                                x.parse::<u64>().map_err(|_| {
+                                    ParseError::InvalidAttributeValue("CHANNELS".to_string())
+                                })
                             });
 
                         let coding_identifiers = x
@@ -468,46 +538,68 @@ impl TryFrom<AttributeList> for Media {
                             .next()
                             .map(|s| {
                                 s.split(',')
-                                    .map(|s| {
-                                        match s {
-                                            "BINAURAL" => Ok(SpecialUsageIdentifier::Binaural),
-                                            "IMMERSIVE" => Ok(SpecialUsageIdentifier::Immersive),
-                                            "DOWNMIX" => Ok(SpecialUsageIdentifier::Downmix),
-                                            s if s.starts_with("BED") => s[4..]
-                                                .parse::<u8>()
-                                                .map(|x| Ok(SpecialUsageIdentifier::Bed(x)))
-                                                .map_err(|_| {
-                                                    ParseError::InvalidAttributeValue(
+                                    .map(|s| match s {
+                                        "BINAURAL" => Ok(SpecialUsageIdentifier::Binaural),
+                                        "IMMERSIVE" => Ok(SpecialUsageIdentifier::Immersive),
+                                        "DOWNMIX" => Ok(SpecialUsageIdentifier::Downmix),
+                                        s if s.starts_with("BED") => s[4..]
+                                            .parse::<u8>()
+                                            .map(|x| Ok(SpecialUsageIdentifier::Bed(x)))
+                                            .map_err(|_| {
+                                                ParseError::InvalidAttributeValue(
+                                                    "CHANNELS".to_string(),
+                                                )
+                                            })?,
+                                        s if s.starts_with("DOF") => s[4..]
+                                            .parse::<u8>()
+                                            .map(|x| {
+                                                if x == 3 || x == 6 {
+                                                    Ok(SpecialUsageIdentifier::Dof(x))
+                                                } else {
+                                                    Err(ParseError::InvalidAttributeValue(
                                                         "CHANNELS".to_string(),
-                                                    )
-                                                }),
-                                            s if s.starts_with("DOF") => s[4..]
-                                                .parse::<u8>()
-                                                .map(|x| Ok(SpecialUsageIdentifier::Dof(x)))
-                                                .map_err(|_| {
-                                                    ParseError::InvalidAttributeValue(
-                                                        "CHANNELS".to_string(),
-                                                    )
-                                                }),
-                                            s => Ok(SpecialUsageIdentifier::Unknown(s.to_string())),
-                                        }
+                                                    ))
+                                                }
+                                            })
+                                            .map_err(|_| {
+                                                ParseError::InvalidAttributeValue(
+                                                    "CHANNELS".to_string(),
+                                                )
+                                            })?,
+                                        s => Ok(SpecialUsageIdentifier::Unknown(s.to_string())),
                                     })
                                     .collect::<Result<Vec<_>, ParseError>>()
                             })
                             .transpose()?
                             .unwrap_or_default();
 
-                        Ok(Channels {
+                        Ok::<Channels, ParseError>(Channels {
                             count: count?,
                             coding_identifiers,
                             special_usage_identifiers,
                         })
                     })
-                
             })
+            .transpose()?
             .transpose()?;
 
-        Err(ParseError::NoAttribute)
+        Ok(Media {
+            media_type,
+            uri,
+            assoc_language,
+            group_id,
+            language,
+            name,
+            stable_rendition_id,
+            default,
+            autoselect,
+            forced,
+            instream_id,
+            bit_depth,
+            sample_rate,
+            characteristics,
+            channels,
+        })
     }
 }
 

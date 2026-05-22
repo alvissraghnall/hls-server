@@ -33,9 +33,11 @@ pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
             let time_offset = attrs
                 .get("TIME-OFFSET")
                 .and_then(|v| v.as_signed_decimal_floating_point())
-                .ok_or(ParseError::InvalidAttributeValue(
-                    "TIME-OFFSET is REQUIRED".to_string(),
-                ))?;
+                .ok_or(ParseError::InvalidAttributeValue {
+                    attribute: "TIME-OFFSET".into(),
+                    value: "NONE".into(),
+                    expected: "a valid signed decimal floating point number".into(),
+                })?;
             let precise = attrs
                 .get("PRECISE")
                 .and_then(|v| v.as_enumerated_string())
@@ -59,10 +61,10 @@ pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
 
             Ok(SharedTag::Variable(var))
         }
-        _ => Err(ParseError::UnknownTag(format!(
-            "{} is not valid according to HLS spec.",
-            line
-        ))),
+        _ => Err(ParseError::UnknownTag {
+            tag: line.into(),
+            span: crate::error::Span { line: 0, column: 0 }, // change sooon x
+        }),
     }
 }
 
@@ -89,7 +91,10 @@ fn parse_variable_definition(
         });
     }
 
-    Err(ParseError::UnknownTag(format!("{:?}", attrs.keys())))
+    Err(ParseError::UnknownTag {
+        tag: format!("Invalid variable definition: {:?}", attrs),
+        span: crate::error::Span { line: 0, column: 0 }, // change sooon x
+    })
 }
 
 #[cfg(test)]

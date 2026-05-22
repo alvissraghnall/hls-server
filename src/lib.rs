@@ -15,6 +15,7 @@ mod segment;
 mod shared;
 mod uri;
 mod key;
+pub mod codecs;
 
 /**
  *

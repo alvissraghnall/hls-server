@@ -36,7 +36,7 @@ pub(crate) struct Key {
     uri: Uri,
     iv: Option<Vec<u8>>,
     key_format: Option<String>,
-    key_format_versions: Option<Vec<u16>>,
+    key_format_versions: Vec<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -269,7 +269,8 @@ impl TryFrom<AttributeList> for Key {
                 s.split('/')
                     .filter_map(|part| part.parse::<u16>().ok())
                     .collect::<Vec<u16>>()
-            });
+            })
+            .unwrap_or(vec![1]);
 
         Ok(Key {
             method: method_enum,
