@@ -4,7 +4,7 @@ use chrono::{Date, DateTime, FixedOffset};
 
 use crate::{
     attribute_list::{AttributeList, AttributeValue, parse_attribute_list},
-    error::ParseError,
+    error::{ParseError, Span},
     segment::parse_datetime, uri::Uri,
 };
 
@@ -113,8 +113,11 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
         let count = has_import as u8 + has_query as u8 + has_namevalue as u8;
 
         match count {
-            0 => return Err(ParseError::NoAttribute),
-            2.. => return Err(ParseError::TooManyAttributes),
+            0 => return Err(ParseError::MissingAttribute { attribute: "IMPORT, QUERY, or NAME/VALUE".into() }),
+            2.. => return Err(ParseError::TooManyAttributes {
+                expected: 1,
+                found: count as usize,
+            }),
             _ => {}
         }
 
@@ -165,13 +168,13 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
             });
         }
 
-        Err(ParseError::NoAttribute)
+        Err(ParseError::MissingAttribute { attribute: "IMPORT, QUERY, or NAME/VALUE".into() })
     }
 }
 
 impl MediaMetadata {
 
-    pub fn parse_line (line: &str) -> Result<Self, ParseError> {
+    pub fn parse_line (line: &str, line_number: usize) -> Result<Self, ParseError> {
 
         match line {
             l if l.starts_with("#EXT-X-DATERANGE:") => {
@@ -194,7 +197,13 @@ impl MediaMetadata {
                 let attributes = parse_attribute_list(content)?;
                 Ok(MediaMetadata::RenditionReport(RenditionReport::try_from(attributes)?))
             },
-            _ => Err(ParseError::UnknownTag(line.to_string())),
+            _ => Err(ParseError::UnknownTag {
+                tag: line.to_string(),
+                span: Span {
+                    line: line_number,
+                    column: 0,
+                },
+            }),
         }
     }
 }
@@ -205,7 +214,11 @@ impl TryFrom<AttributeList> for DateRange {
     fn try_from(mut map: AttributeList) -> Result<Self, Self::Error> {
         let id = map
             .remove("ID")
-            .ok_or(ParseError::InvalidAttributeValue("ID".to_string()))?
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "ID".into(),
+                value: "NONE".into(),
+                expected: "a quoted string".into(),
+            })?
             .as_quoted_string()
             .ok_or(ParseError::ExpectedQuotedString)?
             .to_string();
@@ -226,7 +239,11 @@ impl TryFrom<AttributeList> for DateRange {
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|s| {
                         parse_datetime(s).map_err(|_| {
-                            ParseError::InvalidAttributeValue("START-DATE".to_string())
+                            ParseError::InvalidAttributeValue {
+                                attribute: "START-DATE".into(),
+                                value: s.into(),
+                                expected: "a valid datetime quoted string".into(),
+                            }
                         })
                     })
             })
@@ -236,7 +253,11 @@ impl TryFrom<AttributeList> for DateRange {
             .remove("CUE")
             .map(|val| {
                 val.as_enumerated_string_list()
-                    .ok_or_else(|| ParseError::InvalidAttributeValue("CUE".into()))?
+                    .ok_or_else(|| ParseError::InvalidAttributeValue {
+                        attribute: "CUE".into(),
+                        value: "NONE".into(),
+                        expected: "a list of enumerated strings".into(),
+                    })?
                     .iter()
                     .map(|x| Cue::from_str(x))
                     .collect::<Result<Vec<_>, _>>()
@@ -251,7 +272,11 @@ impl TryFrom<AttributeList> for DateRange {
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|s| {
                         parse_datetime(s)
-                            .map_err(|_| ParseError::InvalidAttributeValue("END-DATE".to_string()))
+                            .map_err(|_| ParseError::InvalidAttributeValue {
+                                attribute: "END-DATE".into(),
+                                value: s.into(),
+                                expected: "a valid datetime quoted string for as described in RFC 8216".into(),
+                            })
                     })
             })
             .transpose()?;
@@ -260,7 +285,11 @@ impl TryFrom<AttributeList> for DateRange {
             .remove("DURATION")
             .map(|val| {
                 val.as_decimal_floating_point()
-                    .ok_or(ParseError::InvalidAttributeValue("DURATION".to_string()))
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "DURATION".into(),
+                        value: "NONE".into(),
+                        expected: "a decimal floating point number".into(),
+                    })
             })
             .transpose()?;
 
@@ -268,14 +297,18 @@ impl TryFrom<AttributeList> for DateRange {
             .remove("PLANNED-DURATION")
             .map(|val| {
                 val.as_decimal_floating_point()
-                    .ok_or(ParseError::InvalidAttributeValue(
-                        "PLANNED-DURATION".to_string(),
-                    ))
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "PLANNED-DURATION".into(),
+                        value: "NONE".into(),
+                        expected: "a positive decimal floating point number".into(),
+                    })
                     .and_then(|x| {
                         if x < 0.0 {
-                            Err(ParseError::InvalidAttributeValue(
-                                "PLANNED-DURATION".to_string(),
-                            ))
+                            Err(ParseError::InvalidAttributeValue {
+                                attribute: "PLANNED-DURATION".into(),
+                                value: x.to_string().into(),
+                                expected: "a positive decimal floating point number".into(),
+                            })
                         } else {
                             Ok(x)
                         }
@@ -297,7 +330,11 @@ impl TryFrom<AttributeList> for DateRange {
             .remove("END-ON-NEXT")
             .map(|val| {
                 val.as_enumerated_string()
-                    .ok_or(ParseError::InvalidAttributeValue("END-ON-NEXT".to_string()))
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "END-ON-NEXT".into(),
+                        value: "NONE".into(),
+                        expected: "an enumerated string".into(),
+                    })
                     .map(|s| Some(s == "YES"))
             })
             .transpose()?
@@ -329,7 +366,11 @@ impl FromStr for Cue {
             "PRE" => Ok(Cue::Pre),
             "POST" => Ok(Cue::Post),
             "ONCE" => Ok(Cue::Once),
-            _ => Err(ParseError::InvalidAttributeValue(String::from("CUE"))),
+            _ => Err(ParseError::InvalidAttributeValue {
+                attribute: "CUE".into(),
+                value: s.into(),
+                expected: "an enumerated string with value PRE, POST, or ONCE".into(),
+            }),
         }
     }
 }
@@ -340,7 +381,11 @@ impl TryInto<Cue> for AttributeValue {
     fn try_into(self) -> Result<Cue, Self::Error> {
         let list = self
             .as_enumerated_string_list()
-            .ok_or(ParseError::InvalidAttributeValue(String::from("CUE")))?;
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "CUE".into(),
+                value: self.to_string().into(),
+                expected: "an enumerated string with value PRE, POST, or ONCE".into(),
+            })?;
 
         if let Some(v) = list.get("PRE") {
             return Ok(Cue::Pre);
@@ -354,7 +399,11 @@ impl TryInto<Cue> for AttributeValue {
             return Ok(Cue::Once);
         }
 
-        Err(ParseError::InvalidAttributeValue("CUE".to_string()))
+        Err(ParseError::InvalidAttributeValue {
+            attribute: "CUE".into(),
+            value: self.to_string().into(),
+            expected: "an enumerated string with value PRE, POST, or ONCE".into(),
+        })
     }
 }
 
@@ -365,18 +414,34 @@ impl TryFrom<AttributeList> for PreloadHint {
         let type_of = value
             .get("TYPE")
             .and_then(|v| v.as_enumerated_string())
-            .ok_or(ParseError::InvalidAttributeValue("TYPE".to_string()))
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "TYPE".into(),
+                value: "NONE".into(),
+                expected: "an enumerated string".into(),
+            })
             .and_then(|s| match s {
                 "MAP" => Ok(PreloadHintType::Map),
                 "PART" => Ok(PreloadHintType::Part),
-                _ => Err(ParseError::InvalidAttributeValue("TYPE".to_string())),
+                _ => Err(ParseError::InvalidAttributeValue {
+                    attribute: "TYPE".into(),
+                    value: s.into(),
+                    expected: "an enumerated string with value MAP or PART".into(),
+                }),
             })?;
 
         let uri = value
             .get("URI")
             .and_then(|v| v.as_quoted_string())
-            .ok_or(ParseError::InvalidAttributeValue("URI".to_string()))
-            .and_then(|s| Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue("URI".to_string())))?;
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "URI".into(),
+                value: "NONE".into(),
+                expected: "a quoted string".into(),
+            })
+            .and_then(|s| Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue {
+                attribute: "URI".into(),
+                value: s.into(),
+                expected: "a valid URI".into(),
+            }))?;
 
         let byterange_start = value
             .get("BYTERANGE-START")
@@ -403,13 +468,25 @@ impl TryFrom<AttributeList> for RenditionReport {
         let uri = value
             .get("URI")
             .and_then(|v| v.as_quoted_string())
-            .ok_or(ParseError::InvalidAttributeValue("URI".to_string()))
-            .and_then(|s| Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue("URI".to_string())))?;
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "URI".into(),
+                value: "NONE".into(),
+                expected: "a quoted string".into(),
+            })
+            .and_then(|s| Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue {
+                attribute: "URI".into(),
+                value: s.into(),
+                expected: "a valid URI".into(),
+            }))?;
 
         let last_msn = value
             .get("LAST-MSN")
             .and_then(|v| v.as_decimal_integer())
-            .ok_or(ParseError::InvalidAttributeValue("LAST-MSN".to_string()))?;
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "LAST-MSN".into(),
+                value: "NONE".into(),
+                expected: "a valid decimal integer".into(),
+            })?;
 
         let last_part = value
             .get("LAST-PART")
@@ -431,7 +508,11 @@ impl TryFrom<AttributeList> for Skip {
         let skipped_segments = value
             .get("SKIPPED-SEGMENTS")
             .and_then(|v| v.as_decimal_integer())
-            .ok_or(ParseError::InvalidAttributeValue("SKIPPED-SEGMENTS".to_string()))?;
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "SKIPPED-SEGMENTS".into(),
+                value: "NONE".into(),
+                expected: "a valid decimal integer".into(),
+            })?;
 
         let recently_removed_dateranges = value
             .get("RECENTLY-REMOVED-DATERANGES")

@@ -1,4 +1,4 @@
-use crate::codecs::parse::CodecParseError;
+use crate::error::CodecParseError;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Fourcc(u32);

@@ -1,4 +1,4 @@
-use std::{fmt::{self, LowerHex}};
+use std::fmt::{self, LowerHex};
 
 use crate::codecs::fourcc::Fourcc;
 
@@ -6,12 +6,13 @@ pub mod fourcc;
 pub mod parse;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Codec {
+pub enum Codec {
     Mp4a(Mp4aCodec),
     Mp4v(Mp4vCodec),
     Avc(AvcCodec),
     Hevc(Hevc),
     Vp9(Vp9),
+    DolbyVision(DolbyVision),
     Unknown(GenericCodec),
 }
 
@@ -60,6 +61,17 @@ impl Mp4vCodec {
 }
 
 impl AvcCodec {
+    pub(crate) fn get_fourcc(&self) -> Fourcc {
+        self.fourcc
+    }
+
+    pub(crate) fn get_profile(&self) -> AvcProfile {
+        self.profile
+    }
+
+    pub(crate) fn get_level(&self) -> u8 {
+        self.level
+    }
 }
 
 impl Vp9 {
@@ -125,7 +137,7 @@ pub enum VpChromaSubsampling {
 pub(crate) struct Hevc {
     profile: HevcProfile,
     tier: HevcTier,
-    level: u8, // level * 30 
+    level: u8,                         // level * 30
     constraint: Option<(Fourcc, u32)>, // (4CC, val)
     fourcc: Fourcc,
 }
@@ -136,6 +148,85 @@ pub enum Vp9Profile {
     Profile1,
     Profile2,
     Profile3,
+}
+
+// [dvh1|dvhe|dvav|dva1].[profile:02decimal].[level:02decimal]
+//
+// Profile and level are zero-padded decimal, per the Dolby Vision
+// ISOBMFF and HLS specification.
+//
+// : dvh1.08.07   (Profile 8, Level 7)
+//   dvhe.05.06   (...)
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DolbyVisionBase {
+    Dvh1,
+    Dvhe,
+    Dvav,
+    Dva1,
+}
+
+impl DolbyVisionBase {
+    pub fn fourcc(self) -> Fourcc {
+        match self {
+            Self::Dvh1 => Fourcc::new(b"dvh1"),
+            Self::Dvhe => Fourcc::new(b"dvhe"),
+            Self::Dvav => Fourcc::new(b"dvav"),
+            Self::Dva1 => Fourcc::new(b"dva1"),
+        }
+    }
+
+    /// true if this variant is decodable by the underlying base codec
+    pub fn is_backward_compatible(self) -> bool {
+        matches!(self, Self::Dvh1 | Self::Dvav)
+    }
+
+    fn from_fourcc(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "dvh1" => Some(Self::Dvh1),
+            "dvhe" => Some(Self::Dvhe),
+            "dvav" => Some(Self::Dvav),
+            "dva1" => Some(Self::Dva1),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for DolbyVisionBase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let c: [u8; 4] = self.fourcc().into();
+        write!(
+            f,
+            "{}{}{}{}",
+            c[0] as char, c[1] as char, c[2] as char, c[3] as char
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DolbyVision {
+    pub base: DolbyVisionBase,
+    /// Profile number as defined in the Dolby Vision specification.
+    /// Common profiles: 4 (HDR10-compatible), 5 (Dolby-only), 8 (HDR10/HLG compat).
+    pub profile: u8,
+    /// Level number as defined in the Dolby Vision specification (1–13).
+    pub level: u8,
+}
+
+impl DolbyVision {
+    pub fn base_codec_fourcc(&self) -> Fourcc {
+        match self.base {
+            DolbyVisionBase::Dvh1 | DolbyVisionBase::Dvhe => Fourcc::new(b"hvc1"),
+            DolbyVisionBase::Dvav | DolbyVisionBase::Dva1 => Fourcc::new(b"avc1"),
+        }
+    }
+}
+
+impl fmt::Display for DolbyVision {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // "dvh1.08.07"
+        write!(f, "{}.{:02}.{:02}", self.base, self.profile, self.level)
+    }
 }
 
 impl AvcProfile {
@@ -166,6 +257,24 @@ impl AvcProfile {
             AvcProfile::MultiviewHigh => (0x76, 0x00),       // 118
             AvcProfile::MultiviewDepthHigh => (0x8A, 0x00),  // 138
         }
+    }
+}
+
+impl Hevc {
+    pub(crate) fn get_fourcc(&self) -> Fourcc {
+        self.fourcc
+    }
+
+    pub(crate) fn get_profile(&self) -> HevcProfile {
+        self.profile
+    }
+
+    pub(crate) fn get_tier(&self) -> HevcTier {
+        self.tier
+    }
+
+    pub(crate) fn get_level(&self) -> u8 {
+        self.level
     }
 }
 
@@ -238,7 +347,7 @@ impl fmt::Display for Codec {
                 write!(f, "{}.{:02x}.{:02x}", hevc.fourcc, p, level_byte)?;
 
                 if let Some((c_id, c_val)) = &hevc.constraint {
-                    // constraint bytes must be hex (e.g. "L93.B0")
+                    // constraint bytes must be hex (eg "L93.B0")
                     write!(f, ".{}.{:08x}", c_id, c_val)?;
                 }
                 Ok(())
@@ -270,6 +379,8 @@ impl fmt::Display for Codec {
                 )
             }
 
+            Codec::DolbyVision(dv) => write!(f, "{}.{:02}.{:02}", dv.base, dv.profile, dv.level),
+
             Codec::Unknown(generic) => write!(f, "{}", generic.parts.join(".")),
         }
     }
@@ -284,5 +395,65 @@ impl LowerHex for VpChromaSubsampling {
 impl std::fmt::Display for VpChromaSubsampling {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:02}", *self as u8)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompatibilityBrands(Vec<Fourcc>);
+
+impl CompatibilityBrands {
+    pub fn new(brands: Vec<Fourcc>) -> Self {
+        Self(brands)
+    }
+
+    pub fn as_slice(&self) -> &[Fourcc] {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl fmt::Display for CompatibilityBrands {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for brand in &self.0 {
+            write!(f, "/{brand}")?;
+        }
+        Ok(())
+    }
+}
+
+//   "dvh1.08.07/db4h"       — DV profile 8, level 7; brand db4h
+//   "dvh1.05.06"            — DV profile 5, level 6; no brands
+//   "dvh1.08.07/db4h/dv8g"  — two brands
+#[derive(Debug, Clone, PartialEq)]
+pub struct SupplementalCodecEntry {
+    pub(crate) codec: Codec,
+
+    pub(crate) brands: CompatibilityBrands,
+}
+
+impl SupplementalCodecEntry {
+    pub fn new(codec: Codec, brands: Vec<Fourcc>) -> Self {
+        Self {
+            codec,
+            brands: CompatibilityBrands::new(brands),
+        }
+    }
+
+    pub fn has_brands(&self) -> bool {
+        !self.brands.is_empty()
+    }
+}
+
+impl fmt::Display for SupplementalCodecEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // "dvh1.08.07/db4h"  or  "dvh1.05.06"
+        write!(f, "{}{}", self.codec, self.brands)
     }
 }

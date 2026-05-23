@@ -1,8 +1,12 @@
+use core::fmt;
 use std::{default, str::FromStr};
 
 use crate::{
-    attribute_list::{AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list},
-    error::{ParseError, ValidationError},
+    attribute_list::{
+        AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
+    },
+    codecs::{self, Codec, SupplementalCodecEntry, fourcc::Fourcc, parse::parse_codecs_attr},
+    error::{ParseError, SupplementalCodecParseError, ValidationError},
     playlist::{PlayListVariableDefinition, SharedTag},
     segment::Key,
     uri::{Uri, decode},
@@ -57,16 +61,44 @@ pub(crate) struct StreamInf {
     bandwidth: u64,
     average_bandwidth: Option<u64>,
     score: Option<f64>,
-    codecs: Vec<String>,
-    supplemental_codecs: Vec<Vec<String>>,
+    codecs: Vec<Codec>,
+    supplemental_codecs: SupplementalCodecs,
     resolution: Option<(u64, u64)>,
     frame_rate: Option<f32>,
     hdcp_level: Option<HdcpLevel>,
     allowed_cpc: Vec<AllowedCpcEntry>,
     video_range: VideoRange,
-
+    req_video_layout: Option<Vec<ViewPresentationEntry>>,
+    stable_variant_id: Option<String>,
+    audio: Option<String>,
+    video: Option<String>,
+    subtitles: Option<String>,
+    closed_captions: Option<String>,
+    pathway_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ViewPresentationEntry(Vec<PresentationEntrySpecifier>);
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PresentationEntrySpecifier {
+    VideoChannelSpecifier(VideoChannelSpecifier),
+    ProjectionSpecifier(ProjectionSpecifier),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum VideoChannelSpecifier {
+    Stereo,
+    Mono,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ProjectionSpecifier {
+    Rect,
+    Equi,
+    Hequ,
+    Prim,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AllowedCpcEntry {
@@ -78,7 +110,7 @@ pub(crate) struct AllowedCpcEntry {
 pub(crate) enum VideoRange {
     Sdr,
     Hlg,
-    Pq
+    Pq,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +195,100 @@ pub enum MultivariantTag {
     Exclusive(MultivariantExclusiveTag),
 }
 
+//   "dvh1.08.07/db4h"
+//   "dvh1.08.07/db4h,dvh1.05.06"
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SupplementalCodecs {
+    pub entries: Vec<SupplementalCodecEntry>,
+}
+
+impl SupplementalCodecs {
+    pub fn new(entries: Vec<SupplementalCodecEntry>) -> Self {
+        Self { entries }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &SupplementalCodecEntry> {
+        self.entries.iter()
+    }
+
+    /// validate that every enhancement codec has its base-layer declared in
+    /// `codecs` (the parsed CODECS attribute value). returns the first
+    /// offending entry if a base layer is missing.
+    ///
+    /// currently only enforced for DolbyVision entries since the implied
+    /// base-layer FourCC is well-defined.  generic/unknown enhancement codecs
+    /// are passed through without validation.
+    pub fn validate_base_layers<'a>(
+        &'a self,
+        codecs: &[Codec],
+    ) -> Result<(), &'a SupplementalCodecEntry> {
+        for entry in &self.entries {
+            if let Codec::DolbyVision(dv) = &entry.codec {
+                let needed = dv.base_codec_fourcc();
+                let found = codecs.iter().any(|c| match c {
+                    Codec::Avc(a) => a.get_fourcc() == needed || needed == Fourcc::new(b"avc1"),
+                    Codec::Hevc(h) => h.get_fourcc() == needed || needed == Fourcc::new(b"hvc1"),
+                    _ => false,
+                });
+                if !found {
+                    return Err(entry);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for SupplementalCodecs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for entry in &self.entries {
+            if !first {
+                write!(f, ",")?;
+            }
+            write!(f, "{entry}")?;
+            first = false;
+        }
+        Ok(())
+    }
+}
+
+impl FromStr for SupplementalCodecs {
+    type Err = SupplementalCodecParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Ok(Self::default());
+        }
+        let entries = s
+            .split(',')
+            .enumerate()
+            .map(|(i, part)| {
+                part.trim().parse::<SupplementalCodecEntry>().map_err(|e| {
+                    SupplementalCodecParseError::Entry {
+                        index: i,
+                        inner: Box::new(e),
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self::new(entries))
+    }
+}
+
+impl MediaType {
+    const EXPECTED_STRINGS: [&'static str; 4] = ["AUDIO", "VIDEO", "SUBTITLES", "CLOSED-CAPTIONS"];
+}
+
 impl MultivariantPlaylist {
     fn apply_tag(&mut self, tag: SharedTag) -> Result<(), ParseError> {
         match tag {
@@ -208,9 +334,11 @@ impl MultivariantPlaylist {
                     self.variables.push(v);
                 }
                 PlayListVariableDefinition::Import { name: _ } => {
-                    return Err(ParseError::InvalidAttributeDefinition(String::from(
-                        "IMPORT attribute MUST not occur in Multivariant playlists",
-                    )));
+                    return Err(ParseError::InvalidAttributeDefinition {
+                        definition: String::from(
+                            "IMPORT attribute MUST not occur in Multivariant playlists",
+                        ),
+                    });
                 }
             },
 
@@ -313,11 +441,20 @@ impl TryFrom<AttributeList> for Media {
     type Error = ParseError;
 
     fn try_from(mut map: AttributeList) -> Result<Self, Self::Error> {
-        let media_type: MediaType = map
+        let attr = map
             .remove("TYPE")
-            .ok_or(ParseError::InvalidAttributeValue(String::from("TYPE")))?
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "TYPE".into(),
+                value: "NONE".into(),
+                expected: "an enumerated string".into(),
+            })?;
+
+        let media_type: MediaType = attr
             .as_enumerated_string()
-            .ok_or(ParseError::ExpectedEnumeratedString)?
+            .ok_or_else(|| ParseError::InvalidEnumeratedString {
+                value: attr.to_string(), // or format!("{attr:?}")
+                expected: &MediaType::EXPECTED_STRINGS,
+            })?
             .parse()?;
 
         let uri: Option<Uri> = map
@@ -326,15 +463,22 @@ impl TryFrom<AttributeList> for Media {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|x| {
-                        x.parse()
-                            .map_err(|_| ParseError::InvalidAttributeValue("URI".to_string()))
+                        x.parse().map_err(|_| ParseError::InvalidAttributeValue {
+                            attribute: "URI".into(),
+                            value: x.into(),
+                            expected: "a valid URI".into(),
+                        })
                     })
             })
             .transpose()?;
 
         let group_id = map
             .remove("GROUP-ID")
-            .ok_or(ParseError::InvalidAttributeValue(String::from("GROUP-ID")))?
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "GROUP-ID".into(),
+                value: "NONE".into(),
+                expected: "a valid group ID".into(),
+            })?
             .as_quoted_string()
             .ok_or(ParseError::ExpectedQuotedString)?
             .to_string();
@@ -379,14 +523,21 @@ impl TryFrom<AttributeList> for Media {
             .remove("DEFAULT")
             .map(|v| {
                 v.as_enumerated_string()
-                    .ok_or(ParseError::ExpectedEnumeratedString)
+                    .ok_or(ParseError::InvalidEnumeratedString {
+                        value: v.to_string(),
+                        expected: &["YES", "NO"],
+                    })
                     .and_then(|x| {
                         if x == "YES" {
                             Ok(true)
                         } else if x == "NO" {
                             Ok(false)
                         } else {
-                            Err(ParseError::InvalidAttributeValue("DEFAULT".to_string()))
+                            Err(ParseError::InvalidAttributeValue {
+                                attribute: "DEFAULT".into(),
+                                value: x.into(),
+                                expected: "YES or NO".into(),
+                            })
                         }
                     })
             })
@@ -397,14 +548,21 @@ impl TryFrom<AttributeList> for Media {
             .remove("AUTOSELECT")
             .map(|v| {
                 v.as_enumerated_string()
-                    .ok_or(ParseError::ExpectedEnumeratedString)
+                    .ok_or(ParseError::InvalidEnumeratedString {
+                        value: v.to_string(),
+                        expected: &["YES", "NO"],
+                    })
                     .and_then(|x| {
                         if x == "YES" {
                             Ok(true)
                         } else if x == "NO" {
                             Ok(false)
                         } else {
-                            Err(ParseError::InvalidAttributeValue("AUTOSELECT".to_string()))
+                            Err(ParseError::InvalidAttributeValue {
+                                attribute: "AUTOSELECT".into(),
+                                value: x.into(),
+                                expected: "YES or NO".into(),
+                            })
                         }
                     })
             })
@@ -415,14 +573,21 @@ impl TryFrom<AttributeList> for Media {
             .remove("FORCED")
             .map(|v| {
                 v.as_enumerated_string()
-                    .ok_or(ParseError::ExpectedEnumeratedString)
+                    .ok_or(ParseError::InvalidEnumeratedString {
+                        value: v.to_string(),
+                        expected: &["YES", "NO"],
+                    })
                     .and_then(|x| {
                         if x == "YES" {
                             Ok(true)
                         } else if x == "NO" {
                             Ok(false)
                         } else {
-                            Err(ParseError::InvalidAttributeValue("FORCED".to_string()))
+                            Err(ParseError::InvalidAttributeValue {
+                                attribute: "FORCED".into(),
+                                value: x.into(),
+                                expected: "YES or NO".into(),
+                            })
                         }
                     })
             })
@@ -437,11 +602,19 @@ impl TryFrom<AttributeList> for Media {
                     .and_then(|x| {
                         if x.starts_with("CC") {
                             x[2..].parse::<u8>().map(InStreamId::CC).map_err(|_| {
-                                ParseError::InvalidAttributeValue("INSTREAM-ID".to_string())
+                                ParseError::InvalidAttributeValue {
+                                    attribute: "INSTREAM-ID".into(),
+                                    value: x.into(),
+                                    expected: "a valid CC ID".into(),
+                                }
                             })
                         } else if x.starts_with("SERVICE") {
                             x[7..].parse::<u8>().map(InStreamId::Service).map_err(|_| {
-                                ParseError::InvalidAttributeValue("INSTREAM-ID".to_string())
+                                ParseError::InvalidAttributeValue {
+                                    attribute: "INSTREAM-ID".into(),
+                                    value: x.into(),
+                                    expected: "a valid SERVICE ID".into(),
+                                }
                             })
                         } else {
                             if !x.is_empty()
@@ -449,7 +622,11 @@ impl TryFrom<AttributeList> for Media {
                             {
                                 Ok(InStreamId::Other(x.to_string()))
                             } else {
-                                Err(ParseError::InvalidAttributeValue("INSTREAM-ID".to_string()))
+                                Err(ParseError::InvalidAttributeValue {
+                                    attribute: "INSTREAM-ID".into(),
+                                    value: x.into(),
+                                    expected: "a valid INSTREAM-ID".into(),
+                                })
                             }
                         }
                     })
@@ -460,7 +637,9 @@ impl TryFrom<AttributeList> for Media {
             .remove("BIT-DEPTH")
             .map(|v| {
                 v.as_decimal_integer()
-                    .ok_or(ParseError::ExpectedDecimalInteger)
+                    .ok_or(ParseError::ExpectedDecimalInteger {
+                        found: v.to_string(),
+                    })
                     .map(|x| x as u64)
             })
             .transpose()?;
@@ -469,7 +648,9 @@ impl TryFrom<AttributeList> for Media {
             .remove("SAMPLE-RATE")
             .map(|v| {
                 v.as_decimal_integer()
-                    .ok_or(ParseError::ExpectedDecimalInteger)
+                    .ok_or(ParseError::ExpectedDecimalInteger {
+                        found: v.to_string(),
+                    })
                     .map(|x| x as u64)
             })
             .transpose()?;
@@ -522,11 +703,18 @@ impl TryFrom<AttributeList> for Media {
 
                         let count = x
                             .next()
-                            .ok_or(ParseError::InvalidAttributeValue("CHANNELS".to_string()))
+                            .ok_or(ParseError::InvalidAttributeValue {
+                                attribute: "CHANNELS".into(),
+                                value: v.to_string(),
+                                expected: "a valid channel count".into(),
+                            })
                             .and_then(|x| {
-                                x.parse::<u64>().map_err(|_| {
-                                    ParseError::InvalidAttributeValue("CHANNELS".to_string())
-                                })
+                                x.parse::<u64>()
+                                    .map_err(|_| ParseError::InvalidAttributeValue {
+                                        attribute: "CHANNELS".into(),
+                                        value: v.to_string(),
+                                        expected: "a valid channel count".into(),
+                                    })
                             });
 
                         let coding_identifiers = x
@@ -545,10 +733,10 @@ impl TryFrom<AttributeList> for Media {
                                         s if s.starts_with("BED") => s[4..]
                                             .parse::<u8>()
                                             .map(|x| Ok(SpecialUsageIdentifier::Bed(x)))
-                                            .map_err(|_| {
-                                                ParseError::InvalidAttributeValue(
-                                                    "CHANNELS".to_string(),
-                                                )
+                                            .map_err(|_| ParseError::InvalidAttributeValue {
+                                                attribute: "CHANNELS".into(),
+                                                value: v.to_string(),
+                                                expected: "a valid bed identifier".into(),
                                             })?,
                                         s if s.starts_with("DOF") => s[4..]
                                             .parse::<u8>()
@@ -556,15 +744,17 @@ impl TryFrom<AttributeList> for Media {
                                                 if x == 3 || x == 6 {
                                                     Ok(SpecialUsageIdentifier::Dof(x))
                                                 } else {
-                                                    Err(ParseError::InvalidAttributeValue(
-                                                        "CHANNELS".to_string(),
-                                                    ))
+                                                    Err(ParseError::InvalidAttributeValue {
+                                                        attribute: "CHANNELS".into(),
+                                                        value: v.to_string(),
+                                                        expected: "a valid DOF identifier".into(),
+                                                    })
                                                 }
                                             })
-                                            .map_err(|_| {
-                                                ParseError::InvalidAttributeValue(
-                                                    "CHANNELS".to_string(),
-                                                )
+                                            .map_err(|_| ParseError::InvalidAttributeValue {
+                                                attribute: "CHANNELS".into(),
+                                                value: v.to_string(),
+                                                expected: "a valid DOF identifier".into(),
                                             })?,
                                         s => Ok(SpecialUsageIdentifier::Unknown(s.to_string())),
                                     })
@@ -612,7 +802,141 @@ impl FromStr for MediaType {
             "VIDEO" => Ok(Self::Video),
             "SUBTITLES" => Ok(Self::Subtitles),
             "CLOSED-CAPTIONS" => Ok(Self::ClosedCaptions),
-            _ => Err(ParseError::InvalidEnumeratedString(s.to_string())),
+            _ => Err(ParseError::InvalidEnumeratedString {
+                value: s.into(),
+                expected: &MediaType::EXPECTED_STRINGS,
+            }),
+        }
+    }
+}
+
+impl TryFrom<AttributeList> for StreamInf {
+    type Error = ParseError;
+
+    fn try_from(mut map: AttributeList) -> Result<Self, Self::Error> {
+        let bandwidth = map
+            .remove("BANDWIDTH")
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "BANDWIDTH".into(),
+                value: "NONE".into(),
+                expected: "a valid bandwidth".into(),
+            })?
+            .as_decimal_integer()
+            .ok_or(ParseError::ExpectedDecimalInteger {
+                found: "NONE".into(),
+            })?;
+
+        let average_bandwidth = map
+            .remove("AVERAGE-BANDWIDTH")
+            .map(|v| {
+                v.as_decimal_integer()
+                    .ok_or(ParseError::ExpectedDecimalInteger {
+                        found: v.to_string(),
+                    })
+            })
+            .transpose()?;
+
+        let score = map
+            .remove("SCORE")
+            .map(|v| {
+                v.as_decimal_floating_point()
+                    .and_then(|x| {
+                        if x > 0.0 {
+                            return Some(x);
+                        } else {
+                            return None;
+                        }
+                    })
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "SCORE".into(),
+                        value: v.to_string(),
+                        expected: "a positive decimal-floating-point score".into(),
+                    })
+            })
+            .transpose()?;
+
+        let codecs = map
+            .remove("CODECS")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|x| {
+                        let mut codec = parse_codecs_attr(x);
+
+                        match codec {
+                            Ok(c) => Ok(c),
+                            Err(e) => Err(e.1.into()),
+                        }
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let supplemental_codecs = map
+            .remove("SUPPLEMENTAL-CODECS")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|x| x.parse::<SupplementalCodecs>().map_err(|e| e.into()))
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let resolution = map
+            .remove("RESOLUTION")
+            .map(|v| {
+                v.as_decimal_resolution()
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "RESOLUTION".into(),
+                        value: v.to_string(),
+                        expected: "a valid resolution".into(),
+                    })
+            })
+            .transpose()?;
+
+        let frame_rate = map
+            .remove("FRAME-RATE")
+            .map(|v| {
+                v.as_decimal_floating_point()
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "FRAME-RATE".into(),
+                        value: v.to_string(),
+                        expected: "a valid frame rate".into(),
+                    })
+            })
+            .transpose()?;
+
+        let hdcp_level = map
+            .remove("HDCP-LEVEL")
+            .map(|v| {
+                v.as_enumerated_string()
+                    .ok_or(ParseError::InvalidEnumeratedString {
+                        value: v.to_string(),
+                        expected: &["TYPE-0", "TYPE-1", "NONE"],
+                    })
+                    .and_then(|x| {
+                        HdcpLevel::from_str(x)
+                    })
+            })
+            .transpose()?;
+
+        Err(ParseError::ExpectedQuotedString)
+    }
+}
+
+impl FromStr for HdcpLevel {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "TYPE-0" => Ok(Self::Type0),
+            "TYPE-1" => Ok(Self::Type1),
+            "NONE" => Ok(Self::None),
+            _ => Err(ParseError::InvalidAttributeValue {
+                attribute: "HDCP-LEVEL".into(),
+                value: s.to_string(),
+                expected: "a valid HDCP level".into(),
+            }),
         }
     }
 }

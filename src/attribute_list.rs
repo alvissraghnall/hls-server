@@ -134,6 +134,12 @@ impl AttributeValue {
         }
     }
 
+    pub(crate) fn as_decimal_resolution(&self) -> Option<(u64, u64)> {
+        match self {
+            Self::DecimalResolution { width, height } => Some((*width, *height)),
+            _ => None,
+        }
+    }
 
 }
 
@@ -153,7 +159,11 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "NAME" => {
             let parsed = parse_quoted_string(value)?;
             if !is_valid_ext_x_define(&parsed) {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "NAME".into(),
+                    value: parsed,
+                    expected: "a valid NAME according to HLS spec".into(),
+                });
             }
             Ok(AttributeValue::QuotedString(parsed))
         }
@@ -161,7 +171,11 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
             let parsed = parse_quoted_string(value)?;
 
             if !is_valid_ext_x_define_allow_empty(&parsed) {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "VALUE".into(),
+                    value: parsed,
+                    expected: "a valid VALUE according to HLS spec".into(),
+                });
             }
 
             Ok(AttributeValue::QuotedString(parsed))
@@ -170,7 +184,11 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "IMPORT" => {
             let parsed = parse_quoted_string(value)?;
             if !is_valid_ext_x_define(&parsed) {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "IMPORT".into(),
+                    value: parsed,
+                    expected: "a valid IMPORT according to HLS spec".into(),
+                });
             }
             Ok(AttributeValue::QuotedString(parsed))
         }
@@ -178,7 +196,11 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "QUERYPARAM" => {
             let parsed = parse_quoted_string(value)?;
             if !is_valid_ext_x_define(&parsed) {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "QUERYPARAM".into(),
+                    value: parsed,
+                    expected: "a valid QUERYPARAM according to HLS spec".into(),
+                });
             }
             Ok(AttributeValue::QuotedString(parsed))
         }
@@ -273,7 +295,11 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "STABLE-RENDITION-ID" => {
             let parsed = parse_quoted_string(value)?;
             if !is_valid_stable_rendition_id(&parsed) {
-                return Err(ParseError::InvalidAttributeValue(value.to_string()));
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "STABLE-RENDITION-ID".into(),
+                    value: parsed,
+                    expected: "a valid STABLE-RENDITION-ID according to HLS spec".into(),
+                });
             }
             Ok(AttributeValue::QuotedString(parsed))
         },
@@ -284,7 +310,49 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "SAMPLE-RATE" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
         "CHARACTERISTICS" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
         "CHANNELS" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
-        
+
+        "AVERAGE-BANDWIDTH" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
+        "SCORE" => Ok(AttributeValue::DecimalFloatingPoint(value.parse()?)),
+        "SUPPLEMENTAL-CODECS" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "RESOLUTION" => {
+            let parsed = parse_decimal_resolution(value)?;
+            Ok(AttributeValue::DecimalResolution {
+                width: parsed.0,
+                height: parsed.1,
+            })
+        }
+        "FRAME-RATE" => Ok(AttributeValue::DecimalFloatingPoint(value.parse()?)),
+        "HDCP-LEVEL" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "ALLOWED-CPC" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "VIDEO-RANGE" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "REQ-VIDEO-LAYOUT" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "STABLE-VARIANT-ID" => {
+            let parsed = parse_quoted_string(value)?;
+            if !is_valid_stable_rendition_id(&parsed) {
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "STABLE-VARIANT-ID".into(),
+                    value: parsed,
+                    expected: "a valid STABLE-VARIANT-ID according to HLS spec".into(),
+                });
+            }
+            Ok(AttributeValue::QuotedString(parsed))
+        }
+        "AUDIO" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "VIDEO" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "SUBTITLES" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "CLOSED-CAPTIONS" => {
+            // i think i should improve this error handling
+            // really sooon
+            let parsed_qt_string = parse_quoted_string(value);
+            match parsed_qt_string {
+                Ok(v) => Ok(AttributeValue::QuotedString(v)),
+                Err(_) => {
+                    let parsed_enumerated_string = parse_enumerated_string(value)?;
+                    Ok(AttributeValue::EnumeratedString(parsed_enumerated_string))
+                }
+            }
+        }
+        "PATHWAY-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
 
         _ => Err(ParseError::UnknownAttribute(name.into())),
     }
@@ -331,7 +399,10 @@ pub(crate) fn parse_quoted_string(value: &str) -> Result<String, ParseError> {
     let inner = &value[1..value.len() - 1];
 
     if inner.contains('"') || inner.contains('\n') || inner.contains('\r') {
-        return Err(ParseError::InvalidQuotedString(inner.to_string()));
+        return Err(ParseError::InvalidQuotedString {
+            value: inner.to_string(),
+            reason: "Quoted string must not contain double quotes, newlines, or carriage returns".into(),
+        });
     }
 
     Ok(inner.to_string())
@@ -339,7 +410,10 @@ pub(crate) fn parse_quoted_string(value: &str) -> Result<String, ParseError> {
 
 pub(crate) fn parse_enumerated_string(value: &str) -> Result<String, ParseError> {
     if value.contains('"') || value.contains(',') || value.contains(char::is_whitespace) {
-        return Err(ParseError::InvalidEnumeratedString(value.to_string()));
+        return Err(ParseError::InvalidEnumeratedString {
+            value: value.to_string(),
+            expected: &["YES", "NO"],
+        });
     }
     Ok(value.to_string())
 }
@@ -356,7 +430,7 @@ pub(crate) fn parse_enumerated_string_list(value: &str) -> Result<HashSet<String
 pub(crate) fn parse_decimal_resolution(value: &str) -> Result<(u64, u64), ParseError> {
     let parts: Vec<&str> = value.split('x').collect();
     if parts.len() != 2 {
-        return Err(ParseError::InvalidDecimalResolution(value.to_string()));
+        return Err(ParseError::InvalidDecimalResolution { value: value.to_string() });
     }
     let width = parts[0].parse()?;
     let height = parts[1].parse()?;
@@ -365,10 +439,11 @@ pub(crate) fn parse_decimal_resolution(value: &str) -> Result<(u64, u64), ParseE
 
 pub(crate) fn parse_hex_sequence(value: &str) -> Result<Vec<u8>, ParseError> {
     if !value.starts_with("0x") {
-        return Err(ParseError::InvalidHexSequence(value.to_string()));
+        return Err(ParseError::InvalidHexSequence { value: value.to_string() });
     }
     let parsed = value.trim_start_matches("0x");
     let bytes =
-        hex::decode(parsed).map_err(|_| ParseError::InvalidHexSequence(String::from(value)))?;
+        hex::decode(parsed).map_err(|_| ParseError::InvalidHexSequence { value: value.to_string() })?;
     Ok(bytes)
 }
+

@@ -232,11 +232,11 @@ impl Default for ParserState {
 impl TryFrom<AttributeList> for Key {
     type Error = ParseError;
 
-    fn try_from(value: AttributeList) -> Result<Self, Self::Error> {
-        let method = value
+    fn try_from(map: AttributeList) -> Result<Self, Self::Error> {
+        let method = map
             .get("METHOD")
             .and_then(|v| v.as_enumerated_string())
-            .ok_or_else(|| ParseError::NoAttribute)?;
+            .ok_or_else(|| ParseError::MissingAttribute { attribute: "METHOD".into() })?;
 
         let method_enum = match method {
             "NONE" => Method::None,
@@ -244,25 +244,32 @@ impl TryFrom<AttributeList> for Key {
             "SAMPLE-AES" => Method::SampleAes,
             "SAMPLE-AES-CTR" => Method::SampleAesCtr,
             "AES-256-GCM" => Method::Aes256Gcm,
-            _ => return Err(ParseError::InvalidAttributeValue(method.to_string())),
+            _ => return Err(ParseError::InvalidAttributeValue {
+                attribute: "METHOD".into(),
+                value: method.into(),
+                expected: "one of NONE, AES-128, SAMPLE-AES, SAMPLE-AES-CTR, AES-256-GCM".into(),
+            }),
         };
 
-        if method_enum == Method::None && value.len() > 1 {
-            return Err(ParseError::TooManyAttributes);
+        if method_enum == Method::None && map.len() > 1 {
+            return Err(ParseError::TooManyAttributes {
+                expected: 1,
+                found: map.len(),
+            });
         }
 
-        let uri = value
+        let uri = map
             .get("URI")
             .and_then(|v| v.as_quoted_string())
-            .ok_or_else(|| ParseError::NoAttribute)?;
+            .ok_or_else(|| ParseError::MissingAttribute { attribute: "URI".into() })?;
 
-        let iv = value.get("IV").and_then(|v| v.as_hex_sequence());
+        let iv = map.get("IV").and_then(|v| v.as_hex_sequence());
 
-        let key_format = value
+        let key_format = map
             .get("KEYFORMAT")
             .and_then(|v| v.as_quoted_string().map(str::to_owned));
 
-        let key_format_versions = value
+        let key_format_versions = map
             .get("KEYFORMATVERSIONS")
             .and_then(|v| v.as_quoted_string())
             .map(|s| {
@@ -285,33 +292,43 @@ impl TryFrom<AttributeList> for Key {
 impl TryFrom<AttributeList> for Map {
     type Error = ParseError;
 
-    fn try_from(value: AttributeList) -> Result<Self, Self::Error> {
-        let uri = value
+    fn try_from(map: AttributeList) -> Result<Self, Self::Error> {
+        let uri = map
             .get("URI")
             .and_then(|v| v.as_quoted_string())
-            .ok_or_else(|| ParseError::NoAttribute)?;
+            .ok_or_else(|| ParseError::MissingAttribute { attribute: "URI".into() })?;
 
-        let byte_range = if let Some(br) = value.get("BYTERANGE") {
-            let br_str = br.as_quoted_string().ok_or_else(|| {
-                ParseError::InvalidAttributeValue("BYTERANGE must be a quoted string".to_string())
-            })?;
+        let byte_range = if let Some(br) = map.get("BYTERANGE") {
+            let br_str = br.as_quoted_string().ok_or(
+                ParseError::InvalidAttributeValue {
+                    attribute: "BYTERANGE".into(),
+                    value: "NONE".into(),
+                    expected: "a quoted string in the format 'length@offset'".into(),
+                }
+            )?;
             let parts: Vec<&str> = br_str.split('@').collect();
 
             if parts.len() != 2 {
-                return Err(ParseError::InvalidAttributeValue(String::from(
-                    "BYTERANGE must be in the format 'length@offset'",
-                )));
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "BYTERANGE".into(),
+                    value: br_str.into(),
+                    expected: "a quoted string in the format 'length@offset'".into(),
+                });
             }
             let len = parts[0].parse::<u64>().map_err(|_| {
-                ParseError::InvalidAttributeValue(
-                    "Invalid BYTERANGE length at EXT-X-MAP".to_string(),
-                )
+                ParseError::InvalidAttributeValue {
+                    attribute: "BYTERANGE".into(),
+                    value: parts[1].into(),
+                    expected: "a valid decimal integer length value".into(),
+                }
             })?;
 
             let offset = parts[1].parse::<u64>().map_err(|_| {
-                ParseError::InvalidAttributeValue(
-                    "Invalid BYTERANGE offset at EXT-X-MAP".to_string(),
-                )
+                ParseError::InvalidAttributeValue {
+                    attribute: "BYTERANGE".into(),
+                    value: parts[1].into(),
+                    expected: "a valid decimal integer offset value".into(),
+                }
             })?;
 
             Some(ByteRange {
@@ -337,12 +354,20 @@ impl TryFrom<AttributeList> for PartialSegment {
             .get("URI")
             .and_then(|v| v.as_quoted_string())
             .map(|v| v.into())
-            .ok_or(ParseError::InvalidAttributeValue(String::from("URI")))?;
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "URI".into(),
+                value: "NONE".into(),
+                expected: "a quoted string that is a valid uri".into(),
+            })?;
 
         let duration = value
             .get("DURATION")
             .and_then(|v| v.as_decimal_floating_point())
-            .ok_or(ParseError::InvalidAttributeValue(String::from("DURATION")))?;
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "DURATION".into(),
+                value: "NONE".into(),
+                expected: "a decimal floating point number".into(),
+            })?;
 
         let independent = value.get("INDEPENDENT").and_then(|v| {
             if v.as_enumerated_string() == Some("YES") {
@@ -363,15 +388,19 @@ impl TryFrom<AttributeList> for PartialSegment {
                 .splitn(2, '@')
                 .collect::<Vec<_>>();
             let len = parts[0].parse::<u64>().map_err(|_| {
-                ParseError::InvalidAttributeValue(
-                    "Invalid BYTERANGE length at EXT-X-MAP".to_string(),
-                )
+                ParseError::InvalidAttributeValue {
+                    attribute: "BYTERANGE".into(),
+                    value: parts[0].into(),
+                    expected: "a valid decimal integer length value".into(),
+                }
             })?;
             let offset = if parts.len() == 2 {
                 Some(parts[1].parse::<u64>().map_err(|_| {
-                    ParseError::InvalidAttributeValue(
-                        "Invalid BYTERANGE length at EXT-X-MAP".to_string(),
-                    )
+                    ParseError::InvalidAttributeValue {
+                        attribute: "BYTERANGE".into(),
+                        value: parts[1].into(),
+                        expected: "a valid decimal integer offset value".into(),
+                    }
                 })?)
             } else {
                 None
@@ -379,9 +408,7 @@ impl TryFrom<AttributeList> for PartialSegment {
 
             ByteRange { len, offset }
         } else {
-            return Err(ParseError::InvalidAttributeDefinition(String::from(
-                "BYTERANGE",
-            )));
+            return Err(ParseError::MissingAttribute { attribute: "BYTERANGE".into() });
         };
 
         Ok(PartialSegment {

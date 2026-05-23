@@ -65,6 +65,7 @@ pub enum ParseError {
     InvalidUri {
         source: UriError,
     },
+    Codec(CodecParseError),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -88,6 +89,7 @@ pub enum UriError {
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ParseError::Codec(e) => write!(f, "codec: {e}"),
             ParseError::InvalidLine(line) => write!(f, "Invalid line: {}", line),
             ParseError::UnknownTag { tag, span } => write!(f, "Unknown tag: {} at {}:{}", tag, span.line, span.column),
             ParseError::DuplicateTag(tag) => write!(f, "Duplicate tag: {}", tag),
@@ -203,3 +205,113 @@ impl Display for UriError {
 }
 
 impl std::error::Error for UriError {}
+ 
+#[derive(Debug)]
+pub enum SupplementalCodecParseError {
+    Empty,
+    /// The codec portion of an entry failed to parse.
+    Codec(CodecParseError),
+    /// A compatibility brand is not a valid 4-byte ASCII FourCC.
+    InvalidBrand(String),
+    /// A specific comma-separated entry failed; carries its index.
+    Entry {
+        index: usize,
+        inner: Box<SupplementalCodecParseError>,
+    },
+}
+ 
+impl fmt::Display for SupplementalCodecParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty                    => write!(f, "empty supplemental codec string"),
+            Self::Codec(e)                 => write!(f, "invalid codec: {e}"),
+            Self::InvalidBrand(b)          => write!(f, "invalid compatibility brand: {b:?} (must be 4 ASCII bytes)"),
+            Self::Entry { index, inner }   => write!(f, "entry {index}: {inner}"),
+        }
+    }
+}
+ 
+impl std::error::Error for SupplementalCodecParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Codec(e)              => Some(e),
+            Self::Entry { inner, .. }   => Some(inner),
+            _                           => None,
+        }
+    }
+}
+ 
+impl From<CodecParseError> for SupplementalCodecParseError {
+    fn from(e: CodecParseError) -> Self {
+        Self::Codec(e)
+    }
+}
+
+impl From<SupplementalCodecParseError> for ParseError {
+    fn from(value: SupplementalCodecParseError) -> Self {
+        match value {
+            SupplementalCodecParseError::Codec(e) => ParseError::Codec(e),
+            SupplementalCodecParseError::InvalidBrand(b) => ParseError::Codec(CodecParseError::InvalidFourcc(b)),
+            _ => ParseError::Codec(CodecParseError::Empty),
+        }
+    
+    }
+    
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodecParseError {
+    Empty,
+    MissingField(&'static str),
+    InvalidHex {
+        field: &'static str,
+        inner: std::num::ParseIntError,
+    },
+    InvalidDecimal {
+        field: &'static str,
+        inner: std::num::ParseIntError,
+    },
+    UnknownAvcProfile(u8),
+    UnknownHevcProfile(u8),
+    UnknownVp9Profile(u8),
+    InvalidChroma(u8),
+    InvalidFourcc(String),
+    WrongHexLength {
+        field: &'static str,
+        expected: usize,
+        got: usize,
+    },
+}
+
+impl std::fmt::Display for CodecParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => write!(f, "empty codec string"),
+            Self::MissingField(name) => write!(f, "missing required field: {name}"),
+            Self::InvalidHex { field, inner } => {
+                write!(f, "invalid hex in field '{field}': {inner}")
+            }
+            Self::InvalidDecimal { field, inner } => {
+                write!(f, "invalid decimal in field '{field}': {inner}")
+            }
+            Self::UnknownAvcProfile(p) => write!(f, "unknown AVC profile IDC 0x{p:02x}"),
+            Self::UnknownHevcProfile(p) => write!(f, "unknown HEVC profile IDC {p}"),
+            Self::UnknownVp9Profile(p) => write!(f, "unknown VP9 profile {p}"),
+            Self::InvalidChroma(c) => write!(f, "invalid VP chroma subsampling value {c}"),
+            Self::InvalidFourcc(s) => write!(f, "FourCC must be 4 ASCII bytes, got {s:?}"),
+            Self::WrongHexLength {
+                field,
+                expected,
+                got,
+            } => write!(f, "field '{field}' must be {expected} hex chars, got {got}"),
+        }
+    }
+}
+
+impl std::error::Error for CodecParseError {}
+
+impl From<CodecParseError> for ParseError {
+    fn from(value: CodecParseError) -> Self {
+        Self::Codec(value)
+    }
+}

@@ -1,62 +1,12 @@
+use core::fmt;
 use std::str::FromStr;
 
-use crate::codecs::fourcc::Fourcc;
+use crate::{codecs::{DolbyVision, DolbyVisionBase, SupplementalCodecEntry, fourcc::Fourcc}, error::{CodecParseError, SupplementalCodecParseError}};
 
 use super::{
     AvcCodec, AvcProfile, Codec, GenericCodec, Hevc, HevcProfile, HevcTier, Mp4aCodec, Mp4vCodec,
     Vp9, Vp9Profile, VpChromaSubsampling,
 };
-
-#[derive(Debug)]
-pub enum CodecParseError {
-    Empty,
-    MissingField(&'static str),
-    InvalidHex {
-        field: &'static str,
-        inner: std::num::ParseIntError,
-    },
-    InvalidDecimal {
-        field: &'static str,
-        inner: std::num::ParseIntError,
-    },
-    UnknownAvcProfile(u8),
-    UnknownHevcProfile(u8),
-    UnknownVp9Profile(u8),
-    InvalidChroma(u8),
-    InvalidFourcc(String),
-    WrongHexLength {
-        field: &'static str,
-        expected: usize,
-        got: usize,
-    },
-}
-
-impl std::fmt::Display for CodecParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty codec string"),
-            Self::MissingField(name) => write!(f, "missing required field: {name}"),
-            Self::InvalidHex { field, inner } => {
-                write!(f, "invalid hex in field '{field}': {inner}")
-            }
-            Self::InvalidDecimal { field, inner } => {
-                write!(f, "invalid decimal in field '{field}': {inner}")
-            }
-            Self::UnknownAvcProfile(p) => write!(f, "unknown AVC profile IDC 0x{p:02x}"),
-            Self::UnknownHevcProfile(p) => write!(f, "unknown HEVC profile IDC {p}"),
-            Self::UnknownVp9Profile(p) => write!(f, "unknown VP9 profile {p}"),
-            Self::InvalidChroma(c) => write!(f, "invalid VP chroma subsampling value {c}"),
-            Self::InvalidFourcc(s) => write!(f, "FourCC must be 4 ASCII bytes, got {s:?}"),
-            Self::WrongHexLength {
-                field,
-                expected,
-                got,
-            } => write!(f, "field '{field}' must be {expected} hex chars, got {got}"),
-        }
-    }
-}
-
-impl std::error::Error for CodecParseError {}
 
 impl AvcProfile {
     /// RECONSTRUCT the profile variant from the raw (profile_idc, constraint_byte)
@@ -165,6 +115,32 @@ fn dec_u32(s: &str, field: &'static str) -> Result<u32, CodecParseError> {
         .map_err(|inner| CodecParseError::InvalidDecimal { field, inner })
 }
 
+impl FromStr for DolbyVision {
+    type Err = CodecParseError;
+ 
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.split('.');
+ 
+        let fourcc_str = parts.next().ok_or(CodecParseError::Empty)?;
+        let base = DolbyVisionBase::from_fourcc(fourcc_str)
+            .ok_or_else(|| CodecParseError::InvalidFourcc(fourcc_str.to_owned()))?;
+ 
+        let profile = parts
+            .next()
+            .ok_or(CodecParseError::MissingField("dv_profile"))?
+            .parse::<u8>()
+            .map_err(|e| CodecParseError::InvalidDecimal { field: "dv_profile", inner: e })?;
+ 
+        let level = parts
+            .next()
+            .ok_or(CodecParseError::MissingField("dv_level"))?
+            .parse::<u8>()
+            .map_err(|e| CodecParseError::InvalidDecimal { field: "dv_level", inner: e })?;
+ 
+        Ok(DolbyVision { base, profile, level })
+    }
+}
+
 // mp4v.[hex-oti].[decimal-profile-level?]
 impl FromStr for Mp4aCodec {
     type Err = CodecParseError;
@@ -265,7 +241,7 @@ impl FromStr for Hevc {
         } else {
             HevcTier::Main
         };
-        let level = (level_byte & 0x7F);
+        let level = level_byte & 0x7F;
 
         // both fields gotta be present or neither.
         let constraint = match (parts.next(), parts.next()) {
@@ -330,6 +306,31 @@ impl FromStr for Vp9 {
     }
 }
 
+
+impl FromStr for SupplementalCodecEntry {
+    type Err = SupplementalCodecParseError;
+ 
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Split on '/' — first token is the codec, rest are brands.
+        let mut fields = s.split('/');
+ 
+        let codec_str = fields.next().ok_or(SupplementalCodecParseError::Empty)?;
+        let codec = codec_str
+            .parse::<Codec>()
+            .map_err(SupplementalCodecParseError::Codec)?;
+ 
+        let brands = fields
+            .map(|brand_str| {
+                Fourcc::of(brand_str)
+                    .map_err(|_| SupplementalCodecParseError::InvalidBrand(brand_str.to_owned()))
+            })
+            .collect::<Result<Vec<Fourcc>, _>>()?;
+ 
+        Ok(SupplementalCodecEntry::new(codec, brands))
+    }
+}
+
+
 impl FromStr for GenericCodec {
     type Err = CodecParseError;
 
@@ -359,14 +360,247 @@ impl FromStr for Codec {
             k if k.starts_with("avc") => s.parse().map(Codec::Avc),
             "hev1" | "hvc1" | "hev2" => s.parse().map(Codec::Hevc),
             "vp09" | "vp9" => s.parse().map(Codec::Vp9),
+            "dvh1" | "dvhe" | "dvav" | "dva1" => s.parse().map(Codec::DolbyVision),
             _ => s.parse().map(Codec::Unknown),
         }
     }
 }
 
-pub fn parse_codecs_attr(s: &str) -> Result<Vec<Codec>, (usize, CodecParseError)> {
+pub(crate) fn parse_codecs_attr(s: &str) -> Result<Vec<Codec>, (usize, CodecParseError)> {
     s.split(',')
         .enumerate()
         .map(|(i, part)| part.trim().parse().map_err(|e| (i, e)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn avc_constrained_baseline_3_0() {
+        let s = "avc1.42401e";
+        // 0x42 + constraint bit 6 set
+        let c: Codec = s.parse().unwrap();
+        assert_eq!(
+            c,
+            Codec::Avc(AvcCodec {
+                fourcc: Fourcc::new(b"avc1"),
+                profile: AvcProfile::ConstrainedBaseline,
+                level: 30,
+            })
+        );
+        assert_eq!(c.to_string(), s);
+    }
+
+    #[test]
+    fn avc_high_4_0() {
+        let s = "avc1.640028";
+        let c: Codec = s.parse().unwrap();
+        assert_eq!(
+            c,
+            Codec::Avc(AvcCodec {
+                fourcc: Fourcc::new(b"avc1"),
+                profile: AvcProfile::High,
+                level: 40,
+            })
+        );
+        assert_eq!(c.to_string(), s);
+    }
+
+    #[test]
+    fn avc_constrained_high() {
+        // 0x64 + bits 2+3 set (0x0C)
+        let c: Codec = "avc1.640c1f".parse().unwrap();
+        assert_eq!(
+            c,
+            Codec::Avc(AvcCodec {
+                fourcc: Fourcc::new(b"avc1"),
+                profile: AvcProfile::ConstrainedHigh,
+                level: 31,
+            })
+        );
+    }
+
+    #[test]
+    fn avc_alt_fourcc() {
+        let c: Codec = "avc3.640028".parse().unwrap();
+        if let Codec::Avc(avc) = c {
+            assert_eq!(avc.fourcc, Fourcc::new(b"avc3"));
+            assert_eq!(avc.profile, AvcProfile::High);
+        } else {
+            panic!("expected Avc");
+        }
+    }
+
+    #[test]
+    fn avc_wrong_hex_length() {
+        assert!("avc1.4d40".parse::<Codec>().is_err());
+        assert!("avc1.4d401e00".parse::<Codec>().is_err());
+    }
+
+    #[test]
+    fn mp4a_aac_lc() {
+        let s = "mp4a.40.2";
+        let c: Codec = s.parse().unwrap();
+        assert_eq!(
+            c,
+            Codec::Mp4a(Mp4aCodec {
+                oti: 0x40,
+                audio_object_type: Some(2)
+            })
+        );
+        assert_eq!(c.to_string(), s);
+    }
+
+    #[test]
+    fn mp4a_no_aot() {
+        let s = "mp4a.40";
+        let c: Codec = s.parse().unwrap();
+        assert_eq!(
+            c,
+            Codec::Mp4a(Mp4aCodec {
+                oti: 0x40,
+                audio_object_type: None
+            })
+        );
+        assert_eq!(c.to_string(), s);
+    }
+
+    #[test]
+    fn vp9_profile0_level31() {
+        let c: Codec = "vp09.00.31.08.01".parse().unwrap();
+        assert_eq!(
+            c,
+            Codec::Vp9(Vp9 {
+                profile: Vp9Profile::Profile0,
+                level: 31,
+                bit_depth: 8,
+                chroma: VpChromaSubsampling::Horizontal,
+            })
+        );
+    }
+
+    #[test]
+    fn vp9_profile2_10bit() {
+        let c: Codec = "vp09.02.51.10.00".parse().unwrap();
+        if let Codec::Vp9(v) = c {
+            assert_eq!(v.profile, Vp9Profile::Profile2);
+            assert_eq!(v.bit_depth, 10);
+            assert_eq!(v.chroma, VpChromaSubsampling::Vertical);
+        } else {
+            panic!("expected Vp9");
+        }
+    }
+
+    #[test]
+    fn vp9_bad_profile() {
+        assert!("vp09.09.31.08.01".parse::<Codec>().is_err());
+    }
+
+    #[test]
+    fn vp9_bad_chroma() {
+        assert!("vp09.00.31.08.09".parse::<Codec>().is_err());
+    }
+
+    #[test]
+    fn hevc_main_main_tier() {
+        // profile_idc=1 (Main), level_byte=0x5d=93, bit7=0 -> Main tier, level=3.1
+        let c: Codec = "hev1.01.5d".parse().unwrap();
+        if let Codec::Hevc(h) = c {
+            assert_eq!(h.profile, HevcProfile::Main);
+            assert_eq!(h.tier, HevcTier::Main);
+            assert!(
+                ((h.level as f32 / 30.0) - 3.1).abs() < 0.01,
+                "level was {}",
+                h.level
+            );
+            assert!(h.constraint.is_none());
+        } else {
+            panic!("expected Hevc");
+        }
+    }
+
+    #[test]
+    fn hevc_main10_high_tier() {
+        // bit7=1 -> High tier, level = (0xdd & 0x7f) / 30.0 = 93/30 = 3.1
+        let c: Codec = "hvc1.02.dd".parse().unwrap();
+        if let Codec::Hevc(h) = c {
+            assert_eq!(h.profile, HevcProfile::Main10);
+            assert_eq!(h.tier, HevcTier::High);
+            let level_float = h.level as f32 / 30.0;
+            assert!(
+                (level_float - 3.1).abs() < 0.01,
+                "level was {}, expected = {}",
+                h.level,
+                level_float
+            );
+        } else {
+            panic!("expected Hevc");
+        }
+    }
+
+    #[test]
+    fn hevc_unknown_profile() {
+        assert!("hev1.ff.5d".parse::<Codec>().is_err());
+    }
+
+    #[test]
+    fn mp4v_with_level() {
+        let c: Codec = "mp4v.20.9".parse().unwrap();
+        assert_eq!(
+            c,
+            Codec::Mp4v(Mp4vCodec {
+                oti: 0x20,
+                profile_level_indication: Some(9)
+            })
+        );
+    }
+
+    #[test]
+    fn mp4v_no_level() {
+        let c: Codec = "mp4v.20".parse().unwrap();
+        assert_eq!(
+            c,
+            Codec::Mp4v(Mp4vCodec {
+                oti: 0x20,
+                profile_level_indication: None
+            })
+        );
+    }
+
+    #[test]
+    fn generic() {
+        let c: Codec = "ec-3.some.thing".parse().unwrap();
+        assert!(matches!(c, Codec::Unknown(_)));
+    }
+
+    #[test]
+    fn empty_is_err() {
+        assert!("".parse::<Codec>().is_err());
+    }
+
+    #[test]
+    fn case_insensitive_dispatch() {
+        // Kind matching is case-insensitive...fourcc itself is preserved.
+        let lower: Codec = "mp4a.40.2".parse().unwrap();
+        let upper: Codec = "MP4A.40.2".parse().unwrap();
+        assert_eq!(lower, upper);
+    }
+
+    #[test]
+    fn codecs_attr_avc_aac() {
+        let codecs = parse_codecs_attr("avc1.640028,mp4a.40.2").unwrap();
+        assert_eq!(codecs.len(), 2);
+        assert!(matches!(codecs[0], Codec::Avc(_)));
+        assert!(matches!(codecs[1], Codec::Mp4a(_)));
+    }
+
+    #[test]
+    fn codecs_attr_trims_whitespace() {
+        let codecs = parse_codecs_attr("avc1.640028 , mp4a.40.2").unwrap();
+        assert_eq!(codecs.len(), 2);
+    }
+  
+
 }

@@ -1,10 +1,20 @@
+use std::str::FromStr;
+
 use crate::{
     attribute_list::{AttributeList, AttributeValue, parse_attribute_list},
     error::ParseError,
     playlist::{PlayListVariableDefinition, SharedTag},
 };
 
-pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
+impl FromStr for SharedTag {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_shared_tag(s, 0)
+    }
+}
+
+pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedTag, ParseError> {
     match line {
         s if s.starts_with("#EXT-X-VERSION:") => {
             let version = s
@@ -63,38 +73,9 @@ pub(crate) fn parse_shared_tag(line: &str) -> Result<SharedTag, ParseError> {
         }
         _ => Err(ParseError::UnknownTag {
             tag: line.into(),
-            span: crate::error::Span { line: 0, column: 0 }, // change sooon x
+            span: crate::error::Span { line: line_number, column: 0 }, // change sooon x
         }),
     }
-}
-
-fn parse_variable_definition(
-    attrs: &AttributeList,
-) -> Result<PlayListVariableDefinition, ParseError> {
-    if let (Some(name), Some(value)) = (attrs.get("NAME"), attrs.get("VALUE")) {
-        return Ok(PlayListVariableDefinition::NameValue {
-            name: name.to_string(),
-            value: value.to_string(),
-        });
-    }
-
-    if let Some(import) = attrs.get("IMPORT") {
-        return Ok(PlayListVariableDefinition::Import {
-            name: import.to_string(),
-        });
-    }
-
-    if let Some(query_param) = attrs.get("QUERY_PARAM") {
-        return Ok(PlayListVariableDefinition::QueryParam {
-            name: query_param.to_string(),
-            value: String::new(),
-        });
-    }
-
-    Err(ParseError::UnknownTag {
-        tag: format!("Invalid variable definition: {:?}", attrs),
-        span: crate::error::Span { line: 0, column: 0 }, // change sooon x
-    })
 }
 
 #[cfg(test)]
@@ -104,21 +85,21 @@ mod tests {
 
     #[test]
     fn test_parse_version() {
-        let tag = parse_shared_tag("#EXT-X-VERSION:3").unwrap();
+        let tag = parse_shared_tag("#EXT-X-VERSION:3", 3).unwrap();
         assert_eq!(tag, SharedTag::Version(3));
 
-        assert!(parse_shared_tag("#EXT-X-VERSION:abc").is_err());
+        assert!(parse_shared_tag("#EXT-X-VERSION:abc", 3).is_err());
     }
 
     #[test]
     fn test_parse_independent_segments() {
-        let tag = parse_shared_tag("#EXT-X-INDEPENDENT-SEGMENTS").unwrap();
+        let tag = parse_shared_tag("#EXT-X-INDEPENDENT-SEGMENTS", 3).unwrap();
         assert_eq!(tag, SharedTag::IndependentSegments);
     }
 
     #[test]
     fn test_parse_start() {
-        let tag = parse_shared_tag("#EXT-X-START:TIME-OFFSET=10.5,PRECISE=YES").unwrap();
+        let tag = parse_shared_tag("#EXT-X-START:TIME-OFFSET=10.5,PRECISE=YES", 3).unwrap();
         assert_eq!(
             tag,
             SharedTag::Start {
@@ -127,7 +108,7 @@ mod tests {
             }
         );
 
-        let tag = parse_shared_tag("#EXT-X-START:TIME-OFFSET=-2.0").unwrap();
+        let tag = parse_shared_tag("#EXT-X-START:TIME-OFFSET=-2.0", 3).unwrap();
         assert_eq!(
             tag,
             SharedTag::Start {
@@ -139,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_parse_define_name_value() {
-        let tag = parse_shared_tag("#EXT-X-DEFINE:NAME=\"VAR\",VALUE=\"val\"").unwrap();
+        let tag = parse_shared_tag("#EXT-X-DEFINE:NAME=\"VAR\",VALUE=\"val\"", 3).unwrap();
         if let SharedTag::Variable(PlayListVariableDefinition::NameValue { name, value }) = tag {
             assert_eq!(name, "VAR");
             assert_eq!(value, "val");
@@ -150,7 +131,7 @@ mod tests {
 
     #[test]
     fn test_parse_define_import() {
-        let tag = parse_shared_tag("#EXT-X-DEFINE:IMPORT=\"VAR\"").unwrap();
+        let tag = parse_shared_tag("#EXT-X-DEFINE:IMPORT=\"VAR\"", 3).unwrap();
         if let SharedTag::Variable(PlayListVariableDefinition::Import { name }) = tag {
             assert_eq!(name, "VAR");
         } else {
