@@ -1,19 +1,18 @@
-use crate::{
-    error::ParseError,
-    media::{MediaExclusiveTag, parse_media_exclusive_tag},
-    shared::parse_shared_tag,
-};
+use crate::{error::ParseError, media::{MediaExclusiveTag, parse_media_exclusive_tag}};
+
 
 mod attribute_list;
+pub mod codecs;
 mod error;
+mod key;
 mod media;
 mod multivariant;
 mod playlist;
+mod read_write;
 mod segment;
 mod shared;
 mod uri;
-mod key;
-pub mod codecs;
+mod parser;
 
 /**
  *

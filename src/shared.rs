@@ -6,6 +6,14 @@ use crate::{
     playlist::{PlayListVariableDefinition, SharedTag},
 };
 
+pub(crate) trait Tag {
+    fn from_str(s: &str) -> Result<Self, ParseError>
+    where
+        Self: Sized;
+
+    fn validate(&self) -> Result<(), ParseError>;
+}
+
 impl FromStr for SharedTag {
     type Err = ParseError;
 
@@ -75,6 +83,17 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
             tag: line.into(),
             span: crate::error::Span { line: line_number, column: 0 }, // change sooon x
         }),
+    }
+}
+
+impl ToString for SharedTag {
+    fn to_string(&self) -> String {
+
+        match self {
+            SharedTag::Version(v) => format!("#EXT-X-VERSION:{}", v),
+            SharedTag::IndependentSegments => "#EXT-X-INDEPENDENT-SEGMENTS".into(),
+            _ => todo!(),
+        }
     }
 }
 

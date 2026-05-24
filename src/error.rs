@@ -65,7 +65,8 @@ pub enum ParseError {
     InvalidUri {
         source: UriError,
     },
-    Codec(CodecParseError),
+    CodecError(CodecParseError),
+    MixedPlaylistTypes,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -86,10 +87,38 @@ pub enum UriError {
     InvalidUtf8,
 }
 
+#[derive(Debug)]
+pub(crate) enum PlaylistReadError {
+    Io(std::io::Error),
+    Utf8(std::string::FromUtf8Error),
+    BomPresent,
+    InvalidControlCharacter(char),
+    Parse(ParseError),
+}
+
+impl From<std::io::Error> for PlaylistReadError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+impl From<std::string::FromUtf8Error> for PlaylistReadError {
+    fn from(value: std::string::FromUtf8Error) -> Self {
+        Self::Utf8(value)
+    }
+}
+
+impl From<ParseError> for PlaylistReadError {
+    fn from(value: ParseError) -> Self {
+        PlaylistReadError::Parse(value)
+    }
+}
+
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParseError::Codec(e) => write!(f, "codec: {e}"),
+            ParseError::MixedPlaylistTypes => write!(f, "Mixed playlist types, e.g. Multivariant tags in a media playlist, or vice versa."),
+            ParseError::CodecError(e) => write!(f, "codec: {e}"),
             ParseError::InvalidLine(line) => write!(f, "Invalid line: {}", line),
             ParseError::UnknownTag { tag, span } => write!(f, "Unknown tag: {} at {}:{}", tag, span.line, span.column),
             ParseError::DuplicateTag(tag) => write!(f, "Duplicate tag: {}", tag),
@@ -250,9 +279,9 @@ impl From<CodecParseError> for SupplementalCodecParseError {
 impl From<SupplementalCodecParseError> for ParseError {
     fn from(value: SupplementalCodecParseError) -> Self {
         match value {
-            SupplementalCodecParseError::Codec(e) => ParseError::Codec(e),
-            SupplementalCodecParseError::InvalidBrand(b) => ParseError::Codec(CodecParseError::InvalidFourcc(b)),
-            _ => ParseError::Codec(CodecParseError::Empty),
+            SupplementalCodecParseError::Codec(e) => ParseError::CodecError(e),
+            SupplementalCodecParseError::InvalidBrand(b) => ParseError::CodecError(CodecParseError::InvalidFourcc(b)),
+            _ => ParseError::CodecError(CodecParseError::Empty),
         }
     
     }
@@ -312,6 +341,6 @@ impl std::error::Error for CodecParseError {}
 
 impl From<CodecParseError> for ParseError {
     fn from(value: CodecParseError) -> Self {
-        Self::Codec(value)
+        Self::CodecError(value)
     }
 }

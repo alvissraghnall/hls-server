@@ -276,6 +276,14 @@ impl MediaPlaylist {
     }
 }
 
+impl FromStr for MediaExclusiveTag {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_media_exclusive_tag(s)
+    }
+}
+
 pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag, ParseError> {
     match line {
         s if s.starts_with("#EXT-X-TARGETDURATION:") => {

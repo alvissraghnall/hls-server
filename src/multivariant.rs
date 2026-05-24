@@ -439,6 +439,14 @@ impl MultivariantPlaylist {
     }
 }
 
+impl FromStr for MultivariantExclusiveTag {
+    type Err = ParseError;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_multivariant_exclusive_tag(s)
+    }
+}
+
 pub(crate) fn parse_multivariant_exclusive_tag(
     line: &str,
 ) -> Result<MultivariantExclusiveTag, ParseError> {
