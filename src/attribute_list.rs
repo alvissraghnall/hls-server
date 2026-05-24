@@ -365,7 +365,9 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "PATHWAY-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
 
         "DATA-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
-        "FORMAT" => Ok(AttributeValue::QuotedString(parse_enumerated_string(value)?)),
+        "FORMAT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+
+        "SERVER-URI" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
 
         _ => Err(ParseError::UnknownAttribute(name.into())),
     }

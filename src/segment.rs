@@ -229,6 +229,16 @@ impl Default for ParserState {
     }
 }
 
+impl Key {
+    pub(crate) fn get_method(&self) -> &Method {
+        &self.method
+    }
+
+    pub(crate) fn get_uri(&self) -> &Uri {
+        &self.uri
+    }
+}
+
 impl TryFrom<AttributeList> for Key {
     type Error = ParseError;
 
