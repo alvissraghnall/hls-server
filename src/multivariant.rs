@@ -3,7 +3,7 @@ use std::{default, str::FromStr};
 
 use crate::{
     attribute_list::{
-        AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
+        AttributeList, AttributeValue, is_valid_cpc_label, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list
     },
     codecs::{self, Codec, SupplementalCodecEntry, fourcc::Fourcc, parse::parse_codecs_attr},
     error::{ParseError, SupplementalCodecParseError, ValidationError},
@@ -50,10 +50,28 @@ pub struct MultivariantPlaylist {
 pub(crate) enum MultivariantExclusiveTag {
     Media(Media),
     StreamInf(AttributeList),
-    IFrameStreamInf(AttributeList),
+    IFrameStreamInf(IFrameStreamInf),
     SessionData(SessionData),
     SessionKey(Key),
     ContentSteering((String, Option<String>)), //server-uri / pathway-id
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct IFrameStreamInf {
+    uri: Uri,
+    bandwidth: u64,
+    average_bandwidth: Option<u64>,
+    score: Option<f64>,
+    codecs: Vec<Codec>,
+    supplemental_codecs: SupplementalCodecs,
+    resolution: Option<(u64, u64)>,
+    hdcp_level: Option<HdcpLevel>,
+    allowed_cpc: Vec<AllowedCpcEntry>,
+    video_range: VideoRange,
+    req_video_layout: Option<Vec<ViewPresentationEntry>>,
+    stable_variant_id: Option<String>,
+    video: Option<String>,
+    pathway_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,7 +82,7 @@ pub(crate) struct StreamInf {
     codecs: Vec<Codec>,
     supplemental_codecs: SupplementalCodecs,
     resolution: Option<(u64, u64)>,
-    frame_rate: Option<f32>,
+    frame_rate: Option<f64>,
     hdcp_level: Option<HdcpLevel>,
     allowed_cpc: Vec<AllowedCpcEntry>,
     video_range: VideoRange,
@@ -457,16 +475,14 @@ impl TryFrom<AttributeList> for Media {
             })?
             .parse()?;
 
-        let uri: Option<Uri> = map
+        let uri = map
             .remove("URI")
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|x| {
-                        x.parse().map_err(|_| ParseError::InvalidAttributeValue {
-                            attribute: "URI".into(),
-                            value: x.into(),
-                            expected: "a valid URI".into(),
+                        x.parse().map_err(|e| ParseError::InvalidUri {
+                            source: e,
                         })
                     })
             })
@@ -914,13 +930,438 @@ impl TryFrom<AttributeList> for StreamInf {
                         value: v.to_string(),
                         expected: &["TYPE-0", "TYPE-1", "NONE"],
                     })
+                    .and_then(|x| x.parse::<HdcpLevel>())
+            })
+            .transpose()?;
+
+        let allowed_cpc = map
+            .remove("ALLOWED-CPC")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|x| {
-                        HdcpLevel::from_str(x)
+                        x.split(',')
+                            .map(|s| {
+                                let mut s = s.splitn(2, ':');
+
+                                let keyformat = s
+                                    .next()
+                                    .ok_or(ParseError::InvalidAttributeValue {
+                                        attribute: "ALLOWED-CPC".into(),
+                                        value: v.to_string(),
+                                        expected: "a valid KEYFORMAT attribute value".into(),
+                                    })?
+                                    .to_string();
+
+                                let labels = s
+                                    .next()
+                                    .ok_or(ParseError::InvalidAttributeValue {
+                                        attribute: "ALLOWED-CPC".into(),
+                                        value: v.to_string(),
+                                        expected: "a valid label".into(),
+                                    })?
+                                    .split('/')
+                                    .map(|s| s.to_string())
+                                    .collect::<Vec<_>>();
+                                Ok(AllowedCpcEntry { keyformat, labels })
+                            })
+                            .collect::<Result<Vec<_>, ParseError>>()
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let video_range = map
+            .remove("VIDEO-RANGE")
+            .map(|v| {
+                v.as_enumerated_string()
+                    .ok_or(ParseError::InvalidEnumeratedString {
+                        value: v.to_string(),
+                        expected: &["SDR", "HLG", "PQ"],
+                    })
+                    .and_then(|x| x.parse::<VideoRange>())
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let req_video_layout = map
+            .remove("REQ-VIDEO-LAYOUT")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|x| {
+                        x.split(',')
+                            .map(|s| s.parse::<ViewPresentationEntry>())
+                            .collect::<Result<Vec<_>, ParseError>>()
                     })
             })
             .transpose()?;
 
-        Err(ParseError::ExpectedQuotedString)
+        let stable_variant_id = map
+            .remove("STABLE-VARIANT-ID")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+        let audio = map
+            .remove("AUDIO")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+        let video = map
+            .remove("VIDEO")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+        let subtitles = map
+            .remove("SUBTITLES")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+        let closed_captions = map
+            .remove("CLOSED-CAPTIONS")
+            .map(|v| {
+                v.as_quoted_string()
+                    .or_else(|| v.as_enumerated_string())
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "CLOSED-CAPTIONS".into(),
+                        value: v.to_string(),
+                        expected:
+                            "either a quoted-string or an enumerated-string with the value NONE."
+                                .into(),
+                    })
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+        let pathway_id = map
+            .remove("PATHWAY-ID")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "PATHWAY-ID".into(),
+                        value: v.to_string(),
+                        expected:
+                            "a valid quoted string representing thr PATHWAY-ID attribute value."
+                                .into(),
+                    })
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+        Ok(StreamInf {
+            bandwidth,
+            average_bandwidth,
+            score,
+            codecs,
+            supplemental_codecs,
+            resolution,
+            frame_rate,
+            hdcp_level,
+            allowed_cpc,
+            video_range,
+            req_video_layout,
+            stable_variant_id,
+            audio,
+            video,
+            subtitles,
+            closed_captions,
+            pathway_id,
+        })
+    }
+}
+
+impl TryFrom<AttributeList> for IFrameStreamInf {
+    type Error = ParseError;
+
+    fn try_from(mut map: AttributeList) -> Result<Self, Self::Error> {
+        let bandwidth = map
+            .remove("BANDWIDTH")
+            .ok_or(ParseError::InvalidAttributeValue {
+                attribute: "BANDWIDTH".into(),
+                value: "NONE".into(),
+                expected: "a valid bandwidth".into(),
+            })?
+            .as_decimal_integer()
+            .ok_or(ParseError::ExpectedDecimalInteger {
+                found: "NONE".into(),
+            })?;
+
+        let average_bandwidth = map
+            .remove("AVERAGE-BANDWIDTH")
+            .map(|v| {
+                v.as_decimal_integer()
+                    .ok_or(ParseError::ExpectedDecimalInteger {
+                        found: v.to_string(),
+                    })
+            })
+            .transpose()?;
+
+        let score = map
+            .remove("SCORE")
+            .map(|v| {
+                v.as_decimal_floating_point()
+                    .and_then(|x| {
+                        if x > 0.0 {
+                            return Some(x);
+                        } else {
+                            return None;
+                        }
+                    })
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "SCORE".into(),
+                        value: v.to_string(),
+                        expected: "a positive decimal-floating-point score".into(),
+                    })
+            })
+            .transpose()?;
+
+        let codecs = map
+            .remove("CODECS")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|x| {
+                        let mut codec = parse_codecs_attr(x);
+
+                        match codec {
+                            Ok(c) => Ok(c),
+                            Err(e) => Err(e.1.into()),
+                        }
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let supplemental_codecs = map
+            .remove("SUPPLEMENTAL-CODECS")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|x| x.parse::<SupplementalCodecs>().map_err(|e| e.into()))
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let resolution = map
+            .remove("RESOLUTION")
+            .map(|v| {
+                v.as_decimal_resolution()
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "RESOLUTION".into(),
+                        value: v.to_string(),
+                        expected: "a valid resolution".into(),
+                    })
+            })
+            .transpose()?;
+
+        let hdcp_level = map
+            .remove("HDCP-LEVEL")
+            .map(|v| {
+                v.as_enumerated_string()
+                    .ok_or(ParseError::InvalidEnumeratedString {
+                        value: v.to_string(),
+                        expected: &["TYPE-0", "TYPE-1", "NONE"],
+                    })
+                    .and_then(|x| x.parse::<HdcpLevel>())
+            })
+            .transpose()?;
+
+        let allowed_cpc = map
+            .remove("ALLOWED-CPC")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|x| {
+                        x.split(',')
+                            .map(|s| {
+                                let mut s = s.splitn(2, ':');
+
+                                let keyformat = s
+                                    .next()
+                                    .ok_or(ParseError::InvalidAttributeValue {
+                                        attribute: "ALLOWED-CPC".into(),
+                                        value: v.to_string(),
+                                        expected: "a valid KEYFORMAT attribute value".into(),
+                                    })?
+                                    .to_string();
+
+                                let labels = s
+                                    .next()
+                                    .ok_or(ParseError::InvalidAttributeValue {
+                                        attribute: "ALLOWED-CPC".into(),
+                                        value: v.to_string(),
+                                        expected: "a valid label".into(),
+                                    })?
+                                    .split('/')
+                                    .map(|s| s.to_string())
+                                    .collect::<Vec<_>>();
+                                Ok(AllowedCpcEntry { keyformat, labels })
+                            })
+                            .collect::<Result<Vec<_>, ParseError>>()
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let video_range = map
+            .remove("VIDEO-RANGE")
+            .map(|v| {
+                v.as_enumerated_string()
+                    .ok_or(ParseError::InvalidEnumeratedString {
+                        value: v.to_string(),
+                        expected: &["SDR", "HLG", "PQ"],
+                    })
+                    .and_then(|x| x.parse::<VideoRange>())
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let req_video_layout = map
+            .remove("REQ-VIDEO-LAYOUT")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|x| {
+                        x.split(',')
+                            .map(|s| s.parse::<ViewPresentationEntry>())
+                            .collect::<Result<Vec<_>, ParseError>>()
+                    })
+            })
+            .transpose()?;
+
+        let stable_variant_id = map
+            .remove("STABLE-VARIANT-ID")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+        let video = map
+            .remove("VIDEO")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+        let pathway_id = map
+            .remove("PATHWAY-ID")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::InvalidAttributeValue {
+                        attribute: "PATHWAY-ID".into(),
+                        value: v.to_string(),
+                        expected:
+                            "a valid quoted string representing thr PATHWAY-ID attribute value."
+                                .into(),
+                    })
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+         let uri = map
+            .remove("URI")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .and_then(|x| {
+                        x.parse().map_err(|e| ParseError::InvalidUri {
+                            source: e,
+                        })
+                    })
+            })
+            .transpose()?
+            .ok_or_else(|| ParseError::MissingAttribute { attribute: "URI".into() })?;
+
+        Ok(IFrameStreamInf {
+            uri,
+            bandwidth,
+            average_bandwidth,
+            score,
+            codecs,
+            supplemental_codecs,
+            resolution,
+            hdcp_level,
+            allowed_cpc,
+            video_range,
+            req_video_layout,
+            stable_variant_id,
+            video,
+            pathway_id,
+        })
+    }
+}
+
+impl Default for VideoRange {
+    fn default() -> Self {
+        Self::Sdr
+    }
+}
+
+impl FromStr for VideoRange {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "SDR" => Ok(Self::Sdr),
+            "HLG" => Ok(Self::Hlg),
+            "PQ" => Ok(Self::Pq),
+            _ => Err(ParseError::InvalidAttributeValue {
+                attribute: "VIDEO-RANGE".into(),
+                value: s.to_string(),
+                expected: "a valid video range".into(),
+            }),
+        }
+    }
+}
+
+impl FromStr for ViewPresentationEntry {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.split('/')
+            .map(|s| s.parse::<PresentationEntrySpecifier>())
+            .collect::<Result<Vec<_>, ParseError>>()
+            .map(ViewPresentationEntry)
+    }
+}
+
+impl FromStr for PresentationEntrySpecifier {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "CH-STEREO" => Ok(Self::VideoChannelSpecifier(VideoChannelSpecifier::Stereo)),
+            "CH-MONO" => Ok(Self::VideoChannelSpecifier(VideoChannelSpecifier::Mono)),
+            "PROJ-RECT" => Ok(Self::ProjectionSpecifier(ProjectionSpecifier::Rect)),
+            "PROJ-EQUI" => Ok(Self::ProjectionSpecifier(ProjectionSpecifier::Equi)),
+            "PROJ-HEQU" => Ok(Self::ProjectionSpecifier(ProjectionSpecifier::Hequ)),
+            "PROJ-PRIM" => Ok(Self::ProjectionSpecifier(ProjectionSpecifier::Prim)),
+            _ => Err(ParseError::InvalidAttributeValue {
+                attribute: "REQ-VIDEO-LAYOUT".into(),
+                value: s.to_string(),
+                expected: "a valid presentation entry".into(),
+            }),
+        }
     }
 }
 
@@ -938,6 +1379,15 @@ impl FromStr for HdcpLevel {
                 expected: "a valid HDCP level".into(),
             }),
         }
+    }
+}
+
+impl TryFrom<AttributeValue> for SessionData {
+    type Error = ParseError;
+
+    fn try_from(map: AttributeValue) -> Result<Self, Self::Error> {
+
+        Err(ParseError::ExpectedQuotedString)    
     }
 }
 

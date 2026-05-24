@@ -323,7 +323,17 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         }
         "FRAME-RATE" => Ok(AttributeValue::DecimalFloatingPoint(value.parse()?)),
         "HDCP-LEVEL" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
-        "ALLOWED-CPC" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "ALLOWED-CPC" => {
+            let parsed = parse_quoted_string(value)?;
+            if !is_valid_cpc_label(&parsed) {
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "ALLOWED-CPC".into(),
+                    value: parsed,
+                    expected: "a valid CPC label according to HLS spec".into(),
+                });
+            }
+            Ok(AttributeValue::QuotedString(parsed))
+        }
         "VIDEO-RANGE" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
         "REQ-VIDEO-LAYOUT" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
         "STABLE-VARIANT-ID" => {
@@ -354,6 +364,9 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         }
         "PATHWAY-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
 
+        "DATA-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "FORMAT" => Ok(AttributeValue::QuotedString(parse_enumerated_string(value)?)),
+
         _ => Err(ParseError::UnknownAttribute(name.into())),
     }
 }
@@ -372,6 +385,11 @@ pub(crate) fn parse_attribute_list(s: &str) -> Result<AttributeList, ParseError>
         attrs.insert(key.to_string(), parse_attribute_value(key, value)?);
     }
     Ok(attrs)
+}
+
+pub(crate) fn is_valid_cpc_label (s: &str) -> bool {
+    s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 pub(crate) fn is_valid_ext_x_define(s: &str) -> bool {

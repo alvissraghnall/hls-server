@@ -1,5 +1,3 @@
-use std::sync::mpsc::SendError;
-
 use crate::{
     error::ParseError,
     media::{MediaExclusiveTag, parse_media_exclusive_tag},
