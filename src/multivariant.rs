@@ -3,12 +3,13 @@ use std::{default, str::FromStr};
 
 use crate::{
     attribute_list::{
-        AttributeList, AttributeValue, is_valid_cpc_label, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list
+        AttributeList, AttributeValue, is_valid_cpc_label,
+        is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
     },
     codecs::{self, Codec, SupplementalCodecEntry, fourcc::Fourcc, parse::parse_codecs_attr},
     error::{ParseError, SupplementalCodecParseError, ValidationError},
     playlist::{PlayListVariableDefinition, SharedTag},
-    segment::Key,
+    segment::{Key, Method},
     uri::{Uri, decode},
 };
 
@@ -29,8 +30,8 @@ struct PlaylistContext<'a> {
 }
 
 enum SessionDataType {
-    Value,
-    Uri,
+    Value(String),
+    Uri(Uri),
 }
 
 impl Default for MultivariantPlaylist {
@@ -49,11 +50,11 @@ pub struct MultivariantPlaylist {
 
 pub(crate) enum MultivariantExclusiveTag {
     Media(Media),
-    StreamInf(AttributeList),
+    StreamInf(StreamInf),
     IFrameStreamInf(IFrameStreamInf),
     SessionData(SessionData),
     SessionKey(Key),
-    ContentSteering((String, Option<String>)), //server-uri / pathway-id
+    ContentSteering((Uri, Option<String>)), //server-uri / pathway-id
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -443,13 +444,87 @@ pub(crate) fn parse_multivariant_exclusive_tag(
 ) -> Result<MultivariantExclusiveTag, ParseError> {
     match line {
         tag if tag.starts_with("#EXT-X-MEDIA:") => {
-            let attr_str = &tag["#EXT-X-MAP:".len()..];
+            let attr_str = &tag["#EXT-X-MEDIA:".len()..];
             let attrs = parse_attribute_list(attr_str)?;
 
             let media = Media::try_from(attrs)?;
 
             Ok(MultivariantExclusiveTag::Media(media))
         }
+
+        // a <URI> gotta come in the very next line after this
+        // wonder how we'd parse tthat, yeah?
+        tag if tag.starts_with("#EXT-X-STREAM-INF:") => {
+            let attr_str = &tag["#EXT-X-STREAM-INF:".len()..];
+            let attrs = parse_attribute_list(attr_str)?;
+
+            let stream_inf = StreamInf::try_from(attrs)?;
+
+            Ok(MultivariantExclusiveTag::StreamInf(stream_inf))
+        }
+
+        tag if tag.starts_with("#EXT-X-I-FRAME-STREAM-INF:") => {
+            let attr_str = &tag["#EXT-X-I-FRAME-STREAM-INF:".len()..];
+            let attrs = parse_attribute_list(attr_str)?;
+
+            let stream_inf = IFrameStreamInf::try_from(attrs)?;
+
+            Ok(MultivariantExclusiveTag::IFrameStreamInf(stream_inf))
+        }
+
+        tag if tag.starts_with("#EXT-X-SESSION-DATA:") => {
+            let attr_str = &tag["#EXT-X-SESSION-DATA:".len()..];
+            let attrs = parse_attribute_list(attr_str)?;
+
+            let session_data = SessionData::try_from(attrs)?;
+            Ok(MultivariantExclusiveTag::SessionData(session_data))
+        }
+
+        tag if tag.starts_with("#EXT-X-SESSION-KEY:") => {
+            let attr_str = &tag["#EXT-X-SESSION-KEY:".len()..];
+            let attrs = parse_attribute_list(attr_str)?;
+
+            let key = Key::try_from(attrs)?;
+
+            if key.get_method() == &Method::None {
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "METHOD".into(),
+                    value: "NONE".into(),
+                    expected: "METHOD attribute must not be NONE.".into(),
+                });
+            }
+
+            Ok(MultivariantExclusiveTag::SessionKey(key))
+        }
+
+        // deal with this later bubu
+        tag if tag.starts_with("#EXT-X-CONTENT-STEERING:") => {
+            let attr_str = &tag["#EXT-X-CONTENT-STEERING:".len()..];
+            let mut attrs = parse_attribute_list(attr_str)?;
+
+            let uri = attrs
+                .remove("URI")
+                .ok_or(ParseError::InvalidAttributeValue {
+                    attribute: "URI".into(),
+                    value: "NONE".into(),
+                    expected: "a valid URI".into(),
+                })?
+                .as_quoted_string()
+                .ok_or(ParseError::ExpectedQuotedString)
+                .map(|v| v.parse::<Uri>())??;
+
+            let pathway_id = attrs
+                .remove("PATHWAY-ID")
+                .map(|v| {
+                    v.as_quoted_string()
+                        .ok_or(ParseError::ExpectedQuotedString)
+                        .map(|x| x.to_string())
+                })
+                .transpose()?;
+            
+            Ok(MultivariantExclusiveTag::ContentSteering((uri, pathway_id)))
+        }
+
 
         _ => Err(ParseError::InvalidLine(line.to_string())),
     }
@@ -480,11 +555,7 @@ impl TryFrom<AttributeList> for Media {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .and_then(|x| {
-                        x.parse().map_err(|e| ParseError::InvalidUri {
-                            source: e,
-                        })
-                    })
+                    .and_then(|x| x.parse().map_err(|e| ParseError::InvalidUri { source: e }))
             })
             .transpose()?;
 
@@ -1278,19 +1349,17 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
             })
             .transpose()?;
 
-         let uri = map
+        let uri = map
             .remove("URI")
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .and_then(|x| {
-                        x.parse().map_err(|e| ParseError::InvalidUri {
-                            source: e,
-                        })
-                    })
+                    .and_then(|x| x.parse().map_err(|e| ParseError::InvalidUri { source: e }))
             })
             .transpose()?
-            .ok_or_else(|| ParseError::MissingAttribute { attribute: "URI".into() })?;
+            .ok_or_else(|| ParseError::MissingAttribute {
+                attribute: "URI".into(),
+            })?;
 
         Ok(IFrameStreamInf {
             uri,
@@ -1382,12 +1451,123 @@ impl FromStr for HdcpLevel {
     }
 }
 
-impl TryFrom<AttributeValue> for SessionData {
+impl TryFrom<AttributeList> for SessionData {
     type Error = ParseError;
 
-    fn try_from(map: AttributeValue) -> Result<Self, Self::Error> {
+    fn try_from(mut map: AttributeList) -> Result<Self, Self::Error> {
+        let data_id = map
+            .remove("DATA-ID")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .map(|x| x.to_string())
+            })
+            .transpose()?
+            .ok_or(ParseError::MissingAttribute {
+                attribute: "DATA-ID".into(),
+            })?;
 
-        Err(ParseError::ExpectedQuotedString)    
+        let format = map
+            .remove("FORMAT")
+            .map(|v| {
+                v.as_enumerated_string()
+                    .ok_or(ParseError::InvalidEnumeratedString {
+                        value: v.to_string(),
+                        expected: &["JSON", "RAW"],
+                    })
+                    .and_then(|x| x.parse::<SessionDataFormat>())
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let language = map
+            .remove("LANGUAGE")
+            .map(|v| {
+                v.as_quoted_string()
+                    .ok_or(ParseError::ExpectedQuotedString)
+                    .map(|x| x.to_string())
+            })
+            .transpose()?;
+
+        let has_uri = map.contains_key("URI");
+        let has_value = map.contains_key("VALUE");
+        let count = (has_uri as u8) + (has_value as u8);
+
+        match count {
+            0 => {
+                return Err(ParseError::MissingAttribute {
+                    attribute: "URI or VALUE".into(),
+                });
+            }
+            2.. => {
+                return Err(ParseError::InvalidAttributeDefinition {
+                    definition: "EXT-X-SESSION-DATA tag MUST contain either a VALUE or URI attribute, but not both.".into()
+                });
+            }
+            1 => {}
+        }
+
+        let data_type = if has_uri {
+            let uri: Uri = map
+                .remove("URI")
+                .map(|v| {
+                    v.as_quoted_string()
+                        .ok_or(ParseError::ExpectedQuotedString)
+                        .and_then(|x| x.parse().map_err(|e| ParseError::InvalidUri { source: e }))
+                })
+                .transpose()?
+                .ok_or_else(|| ParseError::MissingAttribute {
+                    attribute: "URI".into(),
+                })?;
+            SessionDataType::Uri(uri)
+        } else if has_value {
+            let value = map
+                .remove("VALUE")
+                .map(|v| {
+                    v.as_quoted_string()
+                        .ok_or(ParseError::ExpectedQuotedString)
+                        .map(|x| x.to_string())
+                })
+                .transpose()?
+                .ok_or_else(|| ParseError::MissingAttribute {
+                    attribute: "VALUE".into(),
+                })?;
+            SessionDataType::Value(value)
+        } else {
+
+            return Err(ParseError::MissingAttribute {
+                attribute: "URI or VALUE".into(),
+            });
+        };
+
+        Ok(SessionData {
+            data_id,
+            format,
+            language,
+            data_type,
+        })
+
+    }
+}
+
+impl Default for SessionDataFormat {
+    fn default() -> Self {
+        Self::Json
+    }
+}
+
+impl FromStr for SessionDataFormat {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "JSON" => Ok(Self::Json),
+            "RAW" => Ok(Self::Raw),
+            _ => Err(ParseError::InvalidEnumeratedString {
+                value: s.into(),
+                expected: &["JSON", "RAW"],
+            }),
+        }
     }
 }
 
