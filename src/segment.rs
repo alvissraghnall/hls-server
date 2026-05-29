@@ -18,7 +18,7 @@ pub(crate) struct MediaSegment {
     program_date_time: Option<DateTime<Utc>>,
     gap: bool,
     bitrate: Option<u64>,
-    part: Option<AttributeList>,
+    part: Option<PartialSegment>,
 }
 
 pub(crate) struct ByteRange {
@@ -73,7 +73,7 @@ struct PendingSegment {
     program_date_time: Option<DateTime<FixedOffset>>,
     gap: bool,
     bitrate: Option<u64>,
-    part: Option<AttributeList>,
+    part: Option<PartialSegment>,
     key: Option<Key>, // ????????????????
     map: Option<Map>,
 }
@@ -91,7 +91,7 @@ impl MediaSegment {
         program_date_time: Option<DateTime<Utc>>,
         gap: bool,
         bitrate: Option<u64>,
-        part: Option<AttributeList>,
+        part: Option<PartialSegment>,
     ) -> Self {
         Self {
             uri,
@@ -202,7 +202,14 @@ impl PendingSegment {
                     .map_err(|_| ParseError::InvalidLine(line.to_string()))?;
                 self.bitrate = Some(bitrate)
             }
-            tag if tag.starts_with("#EXT-X-PART:") => {}
+            tag if tag.starts_with("#EXT-X-PART:") => {
+                let attr_str = &tag["#EXT-X-PART:".len()..];
+                let attrs = parse_attribute_list(attr_str)?;
+
+                let partial_segment = PartialSegment::try_from(attrs)?;
+                self.part = Some(partial_segment);
+            
+            }
             _ => return Err(ParseError::InvalidLine(line.to_string())),
         }
 

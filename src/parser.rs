@@ -4,13 +4,40 @@ use crate::{
     multivariant::{MultivariantExclusiveTag, MultivariantPlaylist},
     playlist::SharedTag,
     read_write,
+    segment::MediaSegment,
     shared::parse_shared_tag,
 };
+
+static EXTINF: &'static str = "#EXTINF";
+static EXT_X_BYTERANGE: &'static str = "#EXT-X-BYTERANGE";
+static EXT_X_DISCONTINUITY: &'static str = "#EXT-X-DISCONTINUITY";
+static EXT_X_KEY: &'static str = "#EXT-X-KEY";
+static EXT_X_MAP: &'static str = "#EXT-X-MAP";
+static EXT_X_PROGRAM_DATE_TIME: &'static str = "#EXT-X-PROGRAM-DATE-TIME";
+static EXT_X_GAP: &'static str = "#EXT-X-GAP";
+static EXT_X_BITRATE: &'static str = "#EXT-X-BITRATE";
+static EXT_X_PART: &'static str = "#EXT-X-PART";
+
+static MEDIA_SEGMENT_TAGS: [&'static str; 9] = [
+    EXTINF,
+    EXT_X_BYTERANGE,
+    EXT_X_DISCONTINUITY,
+    EXT_X_KEY,
+    EXT_X_MAP,
+    EXT_X_PROGRAM_DATE_TIME,
+    EXT_X_GAP,
+    EXT_X_BITRATE,
+    EXT_X_PART,
+];
+
+
 
 enum ParsedLine {
     Empty,
     Comment,
     Uri(String),
+
+    M3U,
 
     SharedTag(SharedTag),
 
@@ -48,7 +75,7 @@ enum PlaylistKind {
 
 pub fn parse_file_into_playlist(
     path: impl AsRef<std::path::Path>,
-) -> Result<(), error::PlaylistReadError> {
+) -> Result<Playlist, error::PlaylistReadError> {
     let content = read_write::read_from_file(path)?;
 
     let mut parser = PlaylistParser::new();
@@ -57,47 +84,12 @@ pub fn parse_file_into_playlist(
     for raw_line in content.lines() {
         line_number += 1;
 
-        let line = parse_line(raw_line)?;
+        let line = parser.parse_line(raw_line, line_number)?;
 
         parser.consume(line, line_number)?;
     }
 
-    parser.finish();
-
-    Ok(())
-}
-
-fn parse_line(line: &str) -> Result<ParsedLine, ParseError> {
-    let line = line.trim();
-
-    if line.is_empty() {
-        return Ok(ParsedLine::Empty);
-    }
-
-    if !line.starts_with('#') {
-        return Ok(ParsedLine::Uri(line.to_string()));
-    }
-
-    if !line.starts_with("#EXT") {
-        return Ok(ParsedLine::Comment);
-    }
-
-    if let Ok(tag) = line.parse::<SharedTag>() {
-        return Ok(ParsedLine::SharedTag(tag));
-    }
-
-    if let Ok(tag) = line.parse::<MediaExclusiveTag>() {
-        return Ok(ParsedLine::MediaTag(tag));
-    }
-
-    if let Ok(tag) = line.parse::<MultivariantExclusiveTag>() {
-        return Ok(ParsedLine::MultivariantTag(tag));
-    }
-
-    Err(ParseError::UnknownTag {
-        tag: line.into(),
-        span: crate::error::Span { line: 0, column: 0 }, // change soon x
-    })
+    Ok(parser.finish())
 }
 
 impl PlaylistParser {
@@ -113,9 +105,59 @@ impl PlaylistParser {
 }
 
 impl PlaylistParser {
+    fn parse_line(&self, line: &str, line_number: usize) -> Result<ParsedLine, ParseError> {
+        let line = line.trim();
+
+        if line_number == 1 {
+            if line == "#EXTM3U" {
+                return Ok(ParsedLine::M3U);
+            } else {
+                return Err(ParseError::InvalidLine(
+                    "First Line of every Media or Multivariant Playlist must be `#EXTM3U`".into(),
+                ));
+            }
+        }
+
+        if line.is_empty() {
+            return Ok(ParsedLine::Empty);
+        }
+
+        if !line.starts_with('#') {
+            return Ok(ParsedLine::Uri(line.to_string()));
+        }
+
+        if !line.starts_with("#EXT") {
+            return Ok(ParsedLine::Comment);
+        }
+
+        if let Ok(tag) = line.parse::<SharedTag>() {
+            return Ok(ParsedLine::SharedTag(tag));
+        }
+
+        if let Ok(tag) = line.parse::<MediaExclusiveTag>() {
+            return Ok(ParsedLine::MediaTag(tag));
+        }
+
+        if let Ok(tag) = line.parse::<MultivariantExclusiveTag>() {
+            return Ok(ParsedLine::MultivariantTag(tag));
+        }
+
+        // if let Ok(segment) = line.parse::<MediaSegment>() {
+        //     return Ok(ParsedLine::MediaSegment(segment));
+        // }
+
+        Err(ParseError::UnknownTag {
+            tag: line.into(),
+            span: crate::error::Span {
+                line: line_number,
+                column: 0,
+            }, // change soon x
+        })
+    }
+
     fn consume(&mut self, line: ParsedLine, line_number: usize) -> Result<(), ParseError> {
         match line {
-            ParsedLine::Empty | ParsedLine::Comment => {}
+            ParsedLine::Empty | ParsedLine::Comment | ParsedLine::M3U => {}
 
             ParsedLine::Uri(uri) => {
                 self.consume_uri(uri, line_number)?;
@@ -235,6 +277,32 @@ impl PlaylistParser {
                 // should pro'lly default to Media for now
                 Playlist::Media(MediaPlaylist::default())
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use std::path::Path;
+
+    use super::*;
+
+    static ROOT: &'static str = env!("CARGO_MANIFEST_DIR");
+
+    #[test]
+    fn simple_media() {
+        let playlist_file = Path::new(ROOT)
+            .join("examples")
+            .join("01-dead-simple-media.m3u8");
+
+        let playlist = parse_file_into_playlist(playlist_file);
+
+        match playlist {
+            Ok(p) => {
+                assert!(matches!(p, Playlist::Media(_)));
+            }
+            Err(e) => panic!("Failed due to: {:?}", e),
         }
     }
 }
