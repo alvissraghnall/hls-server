@@ -1,13 +1,11 @@
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone as _, Utc};
 
 use crate::{
-    attribute_list::{AttributeList, parse_attribute_list},
-    error::ParseError,
-    uri::Uri,
+    attribute_list::{AttributeList, parse_attribute_list}, error::ParseError, media, uri::Uri
 };
 
 pub(crate) struct MediaSegment {
-    uri: String,
+    uri: Uri,
     byte_range: Option<ByteRange>, // not entirely sure about this just yet
     duration: f32,                 // trying not to use floats, but gats to
     title: Option<String>,
@@ -15,7 +13,7 @@ pub(crate) struct MediaSegment {
     discontinuity: bool,
     key: Option<Key>,
     map: Option<Map>,
-    program_date_time: Option<DateTime<Utc>>,
+    program_date_time: Option<DateTime<FixedOffset>>,
     gap: bool,
     bitrate: Option<u64>,
     part: Option<PartialSegment>,
@@ -47,8 +45,7 @@ pub(crate) enum Method {
     SampleAesCtr,
     Aes256Gcm,
 }
-
-struct ParserState {
+struct ParseSegmentState {
     current_key: Option<Key>,
     current_map: Option<Map>,
     pending_segment: PendingSegment,
@@ -57,11 +54,11 @@ struct ParserState {
     current_uri: Option<String>,
 }
 
-struct PartialSegment {
+pub(crate) struct PartialSegment {
     uri: Uri,
     duration: f64,
     independent: Option<bool>,
-    byte_range: ByteRange,
+    byte_range: Option<ByteRange>,
     gap: bool,
 }
 
@@ -80,7 +77,7 @@ struct PendingSegment {
 
 impl MediaSegment {
     pub(crate) fn new(
-        uri: String,
+        uri: Uri,
         byte_range: Option<ByteRange>,
         duration: f32,
         title: Option<String>,
@@ -88,7 +85,7 @@ impl MediaSegment {
         discontinuity: bool,
         key: Option<Key>,
         map: Option<Map>,
-        program_date_time: Option<DateTime<Utc>>,
+        program_date_time: Option<DateTime<FixedOffset>>,
         gap: bool,
         bitrate: Option<u64>,
         part: Option<PartialSegment>,
@@ -215,9 +212,18 @@ impl PendingSegment {
 
         Ok(())
     }
+
+    pub(crate) fn build (self, uri: Uri) -> Result<MediaSegment, ParseError> {
+
+        MediaSegment::try_from(self)
+            .map(|mut seg| {
+                seg.uri = uri;
+                seg
+            })
+    }
 }
 
-impl ParserState {
+impl ParseSegmentState {
     fn new() -> Self {
         Self {
             current_key: None,
@@ -230,7 +236,7 @@ impl ParserState {
     }
 }
 
-impl Default for ParserState {
+impl Default for ParseSegmentState {
     fn default() -> Self {
         Self::new()
     }
@@ -393,17 +399,20 @@ impl TryFrom<AttributeList> for PartialSegment {
                 None
             }
         });
+
         let gap = value
             .get("GAP")
             .and_then(|v| v.as_enumerated_string())
             .map(|v| v == "YES")
             .unwrap_or(false);
+
         let byte_range = if let Some(br) = value.get("BYTERANGE") {
             let parts = br
                 .as_quoted_string()
                 .ok_or(ParseError::ExpectedQuotedString)?
                 .splitn(2, '@')
                 .collect::<Vec<_>>();
+
             let len = parts[0].parse::<u64>().map_err(|_| {
                 ParseError::InvalidAttributeValue {
                     attribute: "BYTERANGE".into(),
@@ -411,6 +420,7 @@ impl TryFrom<AttributeList> for PartialSegment {
                     expected: "a valid decimal integer length value".into(),
                 }
             })?;
+
             let offset = if parts.len() == 2 {
                 Some(parts[1].parse::<u64>().map_err(|_| {
                     ParseError::InvalidAttributeValue {
@@ -423,9 +433,9 @@ impl TryFrom<AttributeList> for PartialSegment {
                 None
             };
 
-            ByteRange { len, offset }
+            Some(ByteRange { len, offset })
         } else {
-            return Err(ParseError::MissingAttribute { attribute: "BYTERANGE".into() });
+            None
         };
 
         Ok(PartialSegment {
@@ -450,4 +460,28 @@ pub(crate) fn parse_datetime(input: &str) -> Result<DateTime<FixedOffset>, chron
     let naive = NaiveDateTime::parse_from_str(input, "%Y-%m-%dT%H:%M:%S%.3f")?;
     let utc_offset = FixedOffset::east_opt(0).unwrap();
     Ok(utc_offset.from_utc_datetime(&naive))
+}
+
+impl TryFrom<PendingSegment> for MediaSegment {
+    type Error = ParseError;
+
+    fn try_from(value: PendingSegment) -> Result<Self, Self::Error> {
+        if value.duration.is_none() {
+            return Err(ParseError::MissingAttribute { attribute: "DURATION".into() });
+        }
+        Ok(Self {
+            uri: "".into(),
+            byte_range: value.byte_range,
+            duration: value.duration.unwrap(),
+            title: value.title,
+            media_sequence: None, // for now
+            discontinuity: value.discontinuity,   
+            gap: value.gap,
+            key: value.key,
+            map: value.map,
+            program_date_time: value.program_date_time,
+            bitrate: value.bitrate,
+            part: value.part,
+        })
+    }
 }
