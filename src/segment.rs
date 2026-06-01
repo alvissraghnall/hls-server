@@ -7,6 +7,7 @@ use crate::{
     uri::Uri,
 };
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MediaSegment {
     uri: Uri,
     byte_range: Option<ByteRange>, // not entirely sure about this just yet
@@ -22,16 +23,19 @@ pub(crate) struct MediaSegment {
     part: Option<PartialSegment>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ByteRange {
     len: u64,
     offset: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Map {
     uri: Uri,
     byte_range: Option<ByteRange>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Key {
     method: Method,
     uri: Uri,
@@ -58,6 +62,7 @@ pub(crate) struct ParseSegmentState {
     current_uri: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PartialSegment {
     uri: Uri,
     duration: f64,
@@ -114,6 +119,11 @@ impl MediaSegment {
     pub(crate) fn get_duration(&self) -> f32 {
         self.duration
     }
+
+    pub(crate) fn get_title(&self) -> Option<String> {
+        self.title.clone()
+    }
+
 }
 
 impl PendingSegment {

@@ -28,6 +28,7 @@ enum PlayListType {
     Event,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum MediaTag {
     Shared(SharedTag),
     Exclusive(MediaExclusiveTag),
@@ -35,7 +36,7 @@ pub enum MediaTag {
 
 pub struct MediaPlaylist {
     pub tags: Vec<MediaTag>,
-    segments: Vec<MediaSegment>,
+    pub(crate) segments: Vec<MediaSegment>,
 
     pub variables: Vec<PlayListVariableDefinition>,
 

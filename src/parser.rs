@@ -155,6 +155,7 @@ impl PlaylistParser {
         }
 
         if let Ok(_) = segment_state.parse_line(line) {
+            println!("{:?}", line);
             return Ok(ParsedLine::MediaSegment);
         }
 
@@ -271,6 +272,12 @@ impl PlaylistParser {
             PlaylistKind::Unknown => {
                 // A standalone URI lowk implies we're in a media playlist
                 self.promote_to_media()?;
+                let pseg = segment_state
+                    .take_pending_segment()
+                    .ok_or(ParseError::NoPendingSegment)?;
+                let media_segment = pseg.build(uri.as_str().into())?;
+                self.segments.push(media_segment);
+
                 self.uris.push((uri, line_number));
             }
             PlaylistKind::Media => {
@@ -314,6 +321,8 @@ impl PlaylistParser {
                         }
                     }
                 }
+
+                media_playlist.segments = self.segments;
 
                 // combine self.media_tags and self.uris into MediaPlaylist
                 Ok(Playlist::Media(media_playlist))
@@ -392,8 +401,47 @@ mod tests {
             Ok(p) => {
                 assert!(matches!(p, Playlist::Media(_)));
 
-                p.as_media().and_then(|media| {
-                    assert!(media.tags.);
+                p.as_media().map(|media| {
+
+                    println!("{}", media.segments.len());
+                    assert!(media.tags.contains(&MediaTag::Shared(SharedTag::Version(3))));
+                    assert!(media.tags.contains(&MediaTag::Exclusive(MediaExclusiveTag::TargetDuration(10))));
+                    let mut iter = media.segments.iter();
+                    assert_eq!(iter.next().unwrap().get_duration(), 9.009);
+                    assert_eq!(iter.next().unwrap().get_duration(), 9.009);
+                    assert_eq!(iter.next().unwrap().get_duration(), 3.003);
+                    assert_eq!(media.tags.last(), Some(&MediaTag::Exclusive(MediaExclusiveTag::EndList)));
+                });
+                
+            }
+            Err(e) => panic!("Failed due to: {:?}", e),
+        }
+    }
+
+    
+    #[test]
+    fn media_with_tags() {
+        let playlist_file = Path::new(ROOT)
+            .join("examples")
+            .join("02-media-with-tags.m3u8");
+
+        let playlist = parse_file_into_playlist(playlist_file);
+
+        match playlist {
+            Ok(p) => {
+                assert!(matches!(p, Playlist::Media(_)));
+
+                p.as_media().map(|media| {
+
+                    println!("{}", media.segments.len());
+                    assert!(media.tags.contains(&MediaTag::Shared(SharedTag::Version(7))));
+                    assert!(media.tags.contains(&MediaTag::Shared(SharedTag::IndependentSegments)));
+                    assert!(media.tags.contains(&MediaTag::Exclusive(MediaExclusiveTag::TargetDuration(8))));
+                    let mut iter = media.segments.iter();
+                    assert_eq!(iter.next().unwrap().get_duration(), 8.000);
+                    assert_eq!(iter.next().unwrap().get_duration(), 8.000);
+                    assert_eq!(iter.next().unwrap().get_duration(), 8.000);
+                    assert_eq!(media.tags.last(), Some(&MediaTag::Exclusive(MediaExclusiveTag::EndList)));
                 });
                 
             }
