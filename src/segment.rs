@@ -1,7 +1,10 @@
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone as _, Utc};
 
 use crate::{
-    attribute_list::{AttributeList, parse_attribute_list}, error::ParseError, media, uri::Uri
+    attribute_list::{AttributeList, parse_attribute_list},
+    error::ParseError,
+    media,
+    uri::Uri,
 };
 
 pub(crate) struct MediaSegment {
@@ -45,10 +48,11 @@ pub(crate) enum Method {
     SampleAesCtr,
     Aes256Gcm,
 }
-struct ParseSegmentState {
+
+pub(crate) struct ParseSegmentState {
     current_key: Option<Key>,
     current_map: Option<Map>,
-    pending_segment: PendingSegment,
+    pending_segment: Option<PendingSegment>,
     previous_byterange_end: Option<u64>,
     previous_byterange_uri: Option<String>,
     current_uri: Option<String>,
@@ -62,7 +66,7 @@ pub(crate) struct PartialSegment {
     gap: bool,
 }
 
-struct PendingSegment {
+pub(crate) struct PendingSegment {
     duration: Option<f32>, // compulsory // should be int for compat v < 3
     title: Option<String>,
     byte_range: Option<ByteRange>,
@@ -205,7 +209,6 @@ impl PendingSegment {
 
                 let partial_segment = PartialSegment::try_from(attrs)?;
                 self.part = Some(partial_segment);
-            
             }
             _ => return Err(ParseError::InvalidLine(line.to_string())),
         }
@@ -213,26 +216,36 @@ impl PendingSegment {
         Ok(())
     }
 
-    pub(crate) fn build (self, uri: Uri) -> Result<MediaSegment, ParseError> {
-
-        MediaSegment::try_from(self)
-            .map(|mut seg| {
-                seg.uri = uri;
-                seg
-            })
+    pub(crate) fn build(self, uri: Uri) -> Result<MediaSegment, ParseError> {
+        MediaSegment::try_from(self).map(|mut seg| {
+            seg.uri = uri;
+            seg
+        })
     }
 }
 
 impl ParseSegmentState {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             current_key: None,
             current_map: None,
-            pending_segment: PendingSegment::new(),
+            pending_segment: Some(PendingSegment::new()),
             previous_byterange_end: None,
             previous_byterange_uri: None,
             current_uri: None,
         }
+    }
+    pub(crate) fn parse_line(&mut self, line: &str) -> Result<(), ParseError> {
+        self.pending_segment
+            .as_mut()
+            .ok_or(ParseError::NoPendingSegment)?
+            .parse(line)
+    }
+
+    pub(crate) fn take_pending_segment(&mut self) -> Option<PendingSegment> {
+        let pseg = self.pending_segment.take();
+        self.pending_segment = Some(PendingSegment::new());
+        pseg
     }
 }
 
@@ -259,7 +272,9 @@ impl TryFrom<AttributeList> for Key {
         let method = map
             .get("METHOD")
             .and_then(|v| v.as_enumerated_string())
-            .ok_or_else(|| ParseError::MissingAttribute { attribute: "METHOD".into() })?;
+            .ok_or_else(|| ParseError::MissingAttribute {
+                attribute: "METHOD".into(),
+            })?;
 
         let method_enum = match method {
             "NONE" => Method::None,
@@ -267,11 +282,14 @@ impl TryFrom<AttributeList> for Key {
             "SAMPLE-AES" => Method::SampleAes,
             "SAMPLE-AES-CTR" => Method::SampleAesCtr,
             "AES-256-GCM" => Method::Aes256Gcm,
-            _ => return Err(ParseError::InvalidAttributeValue {
-                attribute: "METHOD".into(),
-                value: method.into(),
-                expected: "one of NONE, AES-128, SAMPLE-AES, SAMPLE-AES-CTR, AES-256-GCM".into(),
-            }),
+            _ => {
+                return Err(ParseError::InvalidAttributeValue {
+                    attribute: "METHOD".into(),
+                    value: method.into(),
+                    expected: "one of NONE, AES-128, SAMPLE-AES, SAMPLE-AES-CTR, AES-256-GCM"
+                        .into(),
+                });
+            }
         };
 
         if method_enum == Method::None && map.len() > 1 {
@@ -284,7 +302,9 @@ impl TryFrom<AttributeList> for Key {
         let uri = map
             .get("URI")
             .and_then(|v| v.as_quoted_string())
-            .ok_or_else(|| ParseError::MissingAttribute { attribute: "URI".into() })?;
+            .ok_or_else(|| ParseError::MissingAttribute {
+                attribute: "URI".into(),
+            })?;
 
         let iv = map.get("IV").and_then(|v| v.as_hex_sequence());
 
@@ -319,16 +339,18 @@ impl TryFrom<AttributeList> for Map {
         let uri = map
             .get("URI")
             .and_then(|v| v.as_quoted_string())
-            .ok_or_else(|| ParseError::MissingAttribute { attribute: "URI".into() })?;
+            .ok_or_else(|| ParseError::MissingAttribute {
+                attribute: "URI".into(),
+            })?;
 
         let byte_range = if let Some(br) = map.get("BYTERANGE") {
-            let br_str = br.as_quoted_string().ok_or(
-                ParseError::InvalidAttributeValue {
+            let br_str = br
+                .as_quoted_string()
+                .ok_or(ParseError::InvalidAttributeValue {
                     attribute: "BYTERANGE".into(),
                     value: "NONE".into(),
                     expected: "a quoted string in the format 'length@offset'".into(),
-                }
-            )?;
+                })?;
             let parts: Vec<&str> = br_str.split('@').collect();
 
             if parts.len() != 2 {
@@ -338,21 +360,22 @@ impl TryFrom<AttributeList> for Map {
                     expected: "a quoted string in the format 'length@offset'".into(),
                 });
             }
-            let len = parts[0].parse::<u64>().map_err(|_| {
-                ParseError::InvalidAttributeValue {
+            let len = parts[0]
+                .parse::<u64>()
+                .map_err(|_| ParseError::InvalidAttributeValue {
                     attribute: "BYTERANGE".into(),
                     value: parts[1].into(),
                     expected: "a valid decimal integer length value".into(),
-                }
-            })?;
+                })?;
 
-            let offset = parts[1].parse::<u64>().map_err(|_| {
-                ParseError::InvalidAttributeValue {
-                    attribute: "BYTERANGE".into(),
-                    value: parts[1].into(),
-                    expected: "a valid decimal integer offset value".into(),
-                }
-            })?;
+            let offset =
+                parts[1]
+                    .parse::<u64>()
+                    .map_err(|_| ParseError::InvalidAttributeValue {
+                        attribute: "BYTERANGE".into(),
+                        value: parts[1].into(),
+                        expected: "a valid decimal integer offset value".into(),
+                    })?;
 
             Some(ByteRange {
                 len,
@@ -413,25 +436,26 @@ impl TryFrom<AttributeList> for PartialSegment {
                 .splitn(2, '@')
                 .collect::<Vec<_>>();
 
-            let len = parts[0].parse::<u64>().map_err(|_| {
-                ParseError::InvalidAttributeValue {
+            let len = parts[0]
+                .parse::<u64>()
+                .map_err(|_| ParseError::InvalidAttributeValue {
                     attribute: "BYTERANGE".into(),
                     value: parts[0].into(),
                     expected: "a valid decimal integer length value".into(),
-                }
-            })?;
+                })?;
 
-            let offset = if parts.len() == 2 {
-                Some(parts[1].parse::<u64>().map_err(|_| {
-                    ParseError::InvalidAttributeValue {
-                        attribute: "BYTERANGE".into(),
-                        value: parts[1].into(),
-                        expected: "a valid decimal integer offset value".into(),
-                    }
-                })?)
-            } else {
-                None
-            };
+            let offset =
+                if parts.len() == 2 {
+                    Some(parts[1].parse::<u64>().map_err(|_| {
+                        ParseError::InvalidAttributeValue {
+                            attribute: "BYTERANGE".into(),
+                            value: parts[1].into(),
+                            expected: "a valid decimal integer offset value".into(),
+                        }
+                    })?)
+                } else {
+                    None
+                };
 
             Some(ByteRange { len, offset })
         } else {
@@ -467,7 +491,9 @@ impl TryFrom<PendingSegment> for MediaSegment {
 
     fn try_from(value: PendingSegment) -> Result<Self, Self::Error> {
         if value.duration.is_none() {
-            return Err(ParseError::MissingAttribute { attribute: "DURATION".into() });
+            return Err(ParseError::MissingAttribute {
+                attribute: "DURATION".into(),
+            });
         }
         Ok(Self {
             uri: "".into(),
@@ -475,7 +501,7 @@ impl TryFrom<PendingSegment> for MediaSegment {
             duration: value.duration.unwrap(),
             title: value.title,
             media_sequence: None, // for now
-            discontinuity: value.discontinuity,   
+            discontinuity: value.discontinuity,
             gap: value.gap,
             key: value.key,
             map: value.map,

@@ -309,7 +309,7 @@ impl MediaType {
 }
 
 impl MultivariantPlaylist {
-    fn apply_tag(&mut self, tag: SharedTag) -> Result<(), ParseError> {
+    pub(crate) fn apply_shared_tag(&mut self, tag: SharedTag) -> Result<(), ParseError> {
         match tag {
             SharedTag::Version(v) => {
                 if self
@@ -379,6 +379,11 @@ impl MultivariantPlaylist {
             }
         }
 
+        Ok(())
+    }
+
+    pub(crate) fn apply_exclusive_tag(&mut self, tag: MultivariantExclusiveTag) -> Result<(), ParseError> {
+        self.tags.push(MultivariantTag::Exclusive(tag));
         Ok(())
     }
 
@@ -1587,10 +1592,10 @@ mod tests {
     #[test]
     fn test_multivariant_playlist_apply_version() {
         let mut playlist = MultivariantPlaylist::default();
-        playlist.apply_tag(SharedTag::Version(3)).unwrap();
+        playlist.apply_shared_tag(SharedTag::Version(3)).unwrap();
         assert_eq!(playlist.tags.len(), 1);
 
-        assert!(playlist.apply_tag(SharedTag::Version(4)).is_err());
+        assert!(playlist.apply_shared_tag(SharedTag::Version(4)).is_err());
     }
 
     #[test]
@@ -1598,7 +1603,7 @@ mod tests {
         let mut playlist = MultivariantPlaylist::default();
         assert!(
             playlist
-                .apply_tag(SharedTag::Variable(PlayListVariableDefinition::Import {
+                .apply_shared_tag(SharedTag::Variable(PlayListVariableDefinition::Import {
                     name: "BAD".to_string()
                 }))
                 .is_err()
@@ -1609,7 +1614,7 @@ mod tests {
     fn test_multivariant_playlist_apply_define() {
         let mut playlist = MultivariantPlaylist::default();
         playlist
-            .apply_tag(SharedTag::Variable(PlayListVariableDefinition::NameValue {
+            .apply_shared_tag(SharedTag::Variable(PlayListVariableDefinition::NameValue {
                 name: "VAR".to_string(),
                 value: "VAL".to_string(),
             }))

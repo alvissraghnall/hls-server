@@ -67,6 +67,7 @@ pub enum ParseError {
     },
     CodecError(CodecParseError),
     MixedPlaylistTypes,
+    NoPendingSegment,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -136,6 +137,7 @@ impl std::fmt::Display for ParseError {
             ParseError::InvalidUri { source } => {
                 write!(f, "Invalid URI: {source}")
             }
+            ParseError::NoPendingSegment => write!(f, "No pending segment"),
             ParseError::MissingAttribute { attribute } => write!(f, "Missing attribute: {}", attribute),
             ParseError::InvalidEnumeratedString { value, expected } => write!(f, "Invalid enumerated string: {value} (expected one of: {})", expected.join(", ")),
             ParseError::InvalidHexSequence { value } => write!(f, "Invalid hex sequence: {value}"),

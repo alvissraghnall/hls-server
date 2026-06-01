@@ -101,7 +101,7 @@ impl MediaPlaylist {
         self.segments.push(segment);
     }
 
-    fn apply_shared_tag(&mut self, tag: SharedTag) -> Result<(), ParseError> {
+    pub(crate) fn apply_shared_tag(&mut self, tag: SharedTag) -> Result<(), ParseError> {
         match tag {
             SharedTag::Version(v) => {
                 if self
@@ -168,7 +168,7 @@ impl MediaPlaylist {
         Ok(())
     }
 
-    fn apply_exclusive_tag(&mut self, tag: MediaExclusiveTag) -> Result<(), ParseError> {
+    pub(crate) fn apply_exclusive_tag(&mut self, tag: MediaExclusiveTag) -> Result<(), ParseError> {
         match tag {
             MediaExclusiveTag::TargetDuration(_)
             | MediaExclusiveTag::MediaSequence(_)
@@ -274,6 +274,7 @@ impl MediaPlaylist {
 
         Ok(())
     }
+
 }
 
 impl FromStr for MediaExclusiveTag {
@@ -328,7 +329,7 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
                 )));
             }
         }
-        s if line.starts_with("#EXT-X-ENDLIST:") => {
+        s if line.starts_with("#EXT-X-ENDLIST") => {
             return Ok(MediaExclusiveTag::EndList);
         }
         s if line.starts_with("#EXT-X-PLAYLIST-TYPE:") => {

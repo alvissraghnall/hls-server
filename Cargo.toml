@@ -9,6 +9,7 @@ aes-gcm = { version = "0.10.3", optional = true }
 cbc = { version = "0.2.0", optional = true }
 chrono = "0.4.44"
 hex = "0.4.3"
+itertools = "0.14.0"
 
 [features]
 aes = ["dep:aes", "dep:cbc", "dep:aes-gcm"]
