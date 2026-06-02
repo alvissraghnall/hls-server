@@ -1,17 +1,18 @@
 use std::str::FromStr;
 
 use crate::{
+    CRLF,
     attribute_list::{AttributeList, AttributeValue, parse_attribute_list},
-    error::ParseError,
+    error::{ParseError, ValidationError},
     playlist::{PlayListVariableDefinition, SharedTag},
 };
 
 pub(crate) trait Tag {
-    fn from_str(s: &str) -> Result<Self, ParseError>
-    where
-        Self: Sized;
+    // fn from_str(s: &str) -> Result<Self, ParseError>
+    // where
+    //     Self: Sized;
 
-    fn validate(&self) -> Result<(), ParseError>;
+    fn validate(&self) -> Result<(), ValidationError>;
 }
 
 impl FromStr for SharedTag {
@@ -81,19 +82,34 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
         }
         _ => Err(ParseError::UnknownTag {
             tag: line.into(),
-            span: crate::error::Span { line: line_number, column: 0 }, // change sooon x
+            span: crate::error::Span {
+                line: line_number,
+                column: 0,
+            }, // change sooon x
         }),
     }
 }
 
 impl ToString for SharedTag {
     fn to_string(&self) -> String {
-
         match self {
-            SharedTag::Version(v) => format!("#EXT-X-VERSION:{}", v),
-            SharedTag::IndependentSegments => "#EXT-X-INDEPENDENT-SEGMENTS".into(),
-            _ => todo!(),
+            SharedTag::Version(v) => format!("#EXT-X-VERSION:{}{}", v, CRLF),
+            SharedTag::IndependentSegments => format!("#EXT-X-INDEPENDENT-SEGMENTS{}", CRLF),
+            SharedTag::Start {
+                precise,
+                time_offset,
+            } => format!(
+                "#EXT-X-START:PRECISE={},TIME-OFFSET={}{}",
+                precise, time_offset, CRLF
+            ),
+            SharedTag::Variable(var) => format!("#EXT-X-DEFINE:{}{}", var, CRLF),
         }
+    }
+}
+
+impl Tag for SharedTag {
+    fn validate(&self) -> Result<(), ValidationError> {
+        Ok(())
     }
 }
 
@@ -173,53 +189,3 @@ mod tests {
         assert!(parse_quoted_string("\"hello\n\"").is_err());
     }
 }
-
-// fn build_playlist_def(mut map: AttributeList) -> Result<PlayListVariableDefinition, ParseError> {
-//     let has_import = map.contains_key("IMPORT");
-//     let has_query = map.contains_key("QUERY");
-//     let has_namevalue = map.contains_key("NAME") || map.contains_key("VALUE");
-
-//     let count = has_import as u8 + has_query as u8 + has_namevalue as u8;
-
-//     match count {
-//         0 => return Err(ParseError::NoAttribute),
-//         2.. => return Err(ParseError::TooManyAttributes),
-//         _ => {}
-//     }
-
-//     if has_import {
-//         let raw = map
-//             .remove("IMPORT")
-//             .ok_or(ParseError::UnknownAttribute("IMPORT".to_string()))?;
-
-//         return Ok(PlayListVariableDefinition::Import {
-//             name: extract_quoted_string(raw)?,
-//         });
-//     }
-
-//     if has_query {
-//         let raw = map
-//             .remove("QUERY")
-//             .ok_or(ParseError::UnknownAttribute("QUERY".to_string()))?;
-
-//         return Ok(PlayListVariableDefinition::QueryParam {
-//             name: extract_quoted_string(raw)?,
-//         });
-//     }
-
-//     if has_namevalue {
-//         let raw_name = map
-//             .remove("NAME")
-//             .ok_or(ParseError::UnknownAttribute("NAME".to_string()))?;
-//         let raw_value = map
-//             .remove("VALUE")
-//             .ok_or(ParseError::UnknownAttribute("VALUE".to_string()))?;
-
-//         return Ok(PlayListVariableDefinition::NameValue {
-//             name: extract_quoted_string(raw_name)?,
-//             value: extract_quoted_string(raw_value)?,
-//         });
-//     }
-
-//     Err(ParseError::NoAttribute)
-// }

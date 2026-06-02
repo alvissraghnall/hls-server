@@ -1,11 +1,13 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, fmt, str::FromStr};
 
 use chrono::{Date, DateTime, FixedOffset};
 
 use crate::{
+    CRLF,
     attribute_list::{AttributeList, AttributeValue, parse_attribute_list},
     error::{ParseError, Span},
-    segment::parse_datetime, uri::Uri,
+    segment::parse_datetime,
+    uri::Uri,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,11 +115,17 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
         let count = has_import as u8 + has_query as u8 + has_namevalue as u8;
 
         match count {
-            0 => return Err(ParseError::MissingAttribute { attribute: "IMPORT, QUERY, or NAME/VALUE".into() }),
-            2.. => return Err(ParseError::TooManyAttributes {
-                expected: 1,
-                found: count as usize,
-            }),
+            0 => {
+                return Err(ParseError::MissingAttribute {
+                    attribute: "IMPORT, QUERY, or NAME/VALUE".into(),
+                });
+            }
+            2.. => {
+                return Err(ParseError::TooManyAttributes {
+                    expected: 1,
+                    found: count as usize,
+                });
+            }
             _ => {}
         }
 
@@ -168,35 +176,39 @@ impl TryFrom<AttributeList> for PlayListVariableDefinition {
             });
         }
 
-        Err(ParseError::MissingAttribute { attribute: "IMPORT, QUERY, or NAME/VALUE".into() })
+        Err(ParseError::MissingAttribute {
+            attribute: "IMPORT, QUERY, or NAME/VALUE".into(),
+        })
     }
 }
 
 impl MediaMetadata {
-
-    pub fn parse_line (line: &str, line_number: usize) -> Result<Self, ParseError> {
-
+    pub fn parse_line(line: &str, line_number: usize) -> Result<Self, ParseError> {
         match line {
             l if l.starts_with("#EXT-X-DATERANGE:") => {
                 let content = &l["#EXT-X-DATERANGE:".len()..];
                 let attributes = parse_attribute_list(content)?;
                 Ok(MediaMetadata::Daterange(DateRange::try_from(attributes)?))
-            },
+            }
             l if l.starts_with("#EXT-X-SKIP:") => {
                 let content = &l["#EXT-X-SKIP:".len()..];
                 let attributes = parse_attribute_list(content)?;
                 Ok(MediaMetadata::Skip(Skip::try_from(attributes)?))
-            },
+            }
             l if l.starts_with("#EXT-X-PRELOAD-HINT:") => {
                 let content = &l["#EXT-X-PRELOAD-HINT:".len()..];
                 let attributes = parse_attribute_list(content)?;
-                Ok(MediaMetadata::PreloadHint(PreloadHint::try_from(attributes)?))
-            },
+                Ok(MediaMetadata::PreloadHint(PreloadHint::try_from(
+                    attributes,
+                )?))
+            }
             l if l.starts_with("#EXT-X-RENDITION-REPORT:") => {
                 let content = &l["#EXT-X-RENDITION-REPORT:".len()..];
                 let attributes = parse_attribute_list(content)?;
-                Ok(MediaMetadata::RenditionReport(RenditionReport::try_from(attributes)?))
-            },
+                Ok(MediaMetadata::RenditionReport(RenditionReport::try_from(
+                    attributes,
+                )?))
+            }
             _ => Err(ParseError::UnknownTag {
                 tag: line.to_string(),
                 span: Span {
@@ -238,12 +250,10 @@ impl TryFrom<AttributeList> for DateRange {
                 val.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|s| {
-                        parse_datetime(s).map_err(|_| {
-                            ParseError::InvalidAttributeValue {
-                                attribute: "START-DATE".into(),
-                                value: s.into(),
-                                expected: "a valid datetime quoted string".into(),
-                            }
+                        parse_datetime(s).map_err(|_| ParseError::InvalidAttributeValue {
+                            attribute: "START-DATE".into(),
+                            value: s.into(),
+                            expected: "a valid datetime quoted string".into(),
                         })
                     })
             })
@@ -271,12 +281,12 @@ impl TryFrom<AttributeList> for DateRange {
                 val.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|s| {
-                        parse_datetime(s)
-                            .map_err(|_| ParseError::InvalidAttributeValue {
-                                attribute: "END-DATE".into(),
-                                value: s.into(),
-                                expected: "a valid datetime quoted string for as described in RFC 8216".into(),
-                            })
+                        parse_datetime(s).map_err(|_| ParseError::InvalidAttributeValue {
+                            attribute: "END-DATE".into(),
+                            value: s.into(),
+                            expected: "a valid datetime quoted string for as described in RFC 8216"
+                                .into(),
+                        })
                     })
             })
             .transpose()?;
@@ -317,7 +327,8 @@ impl TryFrom<AttributeList> for DateRange {
             .transpose()?;
 
         let x_attr = map
-            .iter().filter_map(|(k, v)| {
+            .iter()
+            .filter_map(|(k, v)| {
                 if k.starts_with("X-") {
                     Some((k.to_string(), v.clone()))
                 } else {
@@ -437,11 +448,13 @@ impl TryFrom<AttributeList> for PreloadHint {
                 value: "NONE".into(),
                 expected: "a quoted string".into(),
             })
-            .and_then(|s| Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue {
-                attribute: "URI".into(),
-                value: s.into(),
-                expected: "a valid URI".into(),
-            }))?;
+            .and_then(|s| {
+                Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue {
+                    attribute: "URI".into(),
+                    value: s.into(),
+                    expected: "a valid URI".into(),
+                })
+            })?;
 
         let byterange_start = value
             .get("BYTERANGE-START")
@@ -473,11 +486,13 @@ impl TryFrom<AttributeList> for RenditionReport {
                 value: "NONE".into(),
                 expected: "a quoted string".into(),
             })
-            .and_then(|s| Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue {
-                attribute: "URI".into(),
-                value: s.into(),
-                expected: "a valid URI".into(),
-            }))?;
+            .and_then(|s| {
+                Uri::from_str(&s).map_err(|_| ParseError::InvalidAttributeValue {
+                    attribute: "URI".into(),
+                    value: s.into(),
+                    expected: "a valid URI".into(),
+                })
+            })?;
 
         let last_msn = value
             .get("LAST-MSN")
@@ -488,9 +503,7 @@ impl TryFrom<AttributeList> for RenditionReport {
                 expected: "a valid decimal integer".into(),
             })?;
 
-        let last_part = value
-            .get("LAST-PART")
-            .and_then(|v| v.as_decimal_integer());
+        let last_part = value.get("LAST-PART").and_then(|v| v.as_decimal_integer());
 
         Ok(Self {
             uri,
@@ -504,7 +517,6 @@ impl TryFrom<AttributeList> for Skip {
     type Error = ParseError;
 
     fn try_from(value: AttributeList) -> Result<Self, Self::Error> {
-        
         let skipped_segments = value
             .get("SKIPPED-SEGMENTS")
             .and_then(|v| v.as_decimal_integer())
@@ -524,7 +536,22 @@ impl TryFrom<AttributeList> for Skip {
             skipped_segments,
             recently_removed_dateranges,
         })
+    }
+}
 
+impl fmt::Display for PlayListVariableDefinition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PlayListVariableDefinition::NameValue { name, value } => {
+                write!(f, r#"NAME="{}",VALUE="{}""#, name, value)
+            }
+            PlayListVariableDefinition::Import { name } => {
+                write!(f, r#"IMPORT="{}""#, name)
+            }
+            PlayListVariableDefinition::QueryParam { name, value: _ } => {
+                write!(f, r#"QUERYPARAM="{}""#, name)
+            }
+        }
     }
 }
 

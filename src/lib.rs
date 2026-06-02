@@ -14,6 +14,8 @@ mod shared;
 mod uri;
 mod parser;
 
+static CRLF: &'static str = "\r\n";
+
 /**
  *
  * WORKFLOW:::::

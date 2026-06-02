@@ -1,13 +1,15 @@
 use std::{fmt, str::FromStr};
 
 use crate::{
+    CRLF,
     attribute_list::{
         AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
     },
     error::{ParseError, ValidationError},
     multivariant::{MultivariantPlaylist, MultivariantTag},
     playlist::{PlayListVariableDefinition, SharedTag},
-    segment::MediaSegment, uri::decode,
+    segment::MediaSegment,
+    uri::decode,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,8 +25,8 @@ pub(crate) enum MediaExclusiveTag {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum PlayListType {
-    VOD,
+pub(crate) enum PlayListType {
+    Vod,
     Event,
 }
 
@@ -73,9 +75,12 @@ impl Default for MediaPlaylist {
     }
 }
 
-impl fmt::Display for MediaExclusiveTag {
+impl fmt::Display for PlayListType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            PlayListType::Vod => write!(f, "VOD"),
+            PlayListType::Event => write!(f, "EVENT"),
+        }
     }
 }
 
@@ -84,7 +89,7 @@ impl FromStr for PlayListType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "VOD" => Ok(PlayListType::VOD),
+            "VOD" => Ok(PlayListType::Vod),
             "EVENT" => Ok(PlayListType::Event),
             _ => Err(ParseError::InvalidLine(format!(
                 "{s} is not valid according to HLS spec."
@@ -156,11 +161,9 @@ impl MediaPlaylist {
                 if self
                     .tags
                     .iter()
-                    .any(|t| matches!(t, MediaTag::Shared(SharedTag::Start { precise: _, .. })))
+                    .any(|t| matches!(t, MediaTag::Shared(SharedTag::Start { .. })))
                 {
-                    return Err(ParseError::DuplicateTag(String::from(
-                        "EXT-X-START:PRECISE",
-                    )));
+                    return Err(ParseError::DuplicateTag(String::from("EXT-X-START")));
                 }
                 self.tags.push(MediaTag::Shared(tag));
             }
@@ -275,7 +278,27 @@ impl MediaPlaylist {
 
         Ok(())
     }
+}
 
+impl ToString for MediaExclusiveTag {
+    fn to_string(&self) -> String {
+        match self {
+            MediaExclusiveTag::TargetDuration(d) => format!("#EXT-X-TARGETDURATION:{}{}", d, CRLF),
+            MediaExclusiveTag::MediaSequence(nu) => format!("#EXT-X-MEDIA-SEQUENCE:{}{}", nu, CRLF),
+            MediaExclusiveTag::DiscontinuitySequence(nu) => {
+                format!("#EXT-X-DISCONTINUITY-SEQUENCE:{}{}", nu, CRLF)
+            }
+            MediaExclusiveTag::EndList => format!("#EXT-X-ENDLIST{}", CRLF),
+            MediaExclusiveTag::PlaylistType(typ) => format!("#EXT-X-PLAYLIST-TYPE:{}{}", typ, CRLF),
+            MediaExclusiveTag::IFramesOnly => format!("#EXT-X-IFRAMES-ONLY{}", CRLF),
+            MediaExclusiveTag::PartInf { part_target } => {
+                format!("#EXT-X-PART-INF:PART-TARGET={}{}", part_target, CRLF)
+            }
+            MediaExclusiveTag::ServerControl(ctrl) => {
+                format!("#EXT-X-SERVER-CONTROL:{}{}", ctrl, CRLF)
+            }
+        }
+    }
 }
 
 impl FromStr for MediaExclusiveTag {
@@ -378,7 +401,6 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
             let server_control = ServerControl::try_from(attrs)?;
 
             Ok(MediaExclusiveTag::ServerControl(server_control))
-            
         }
         _ => Err(ParseError::InvalidLine(line.to_string())),
     }
@@ -387,6 +409,27 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
 impl ServerControl {
     pub fn new(attrs: AttributeList) -> Result<Self, ParseError> {
         Self::try_from(attrs)
+    }
+}
+
+impl fmt::Display for ServerControl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(can_skip_until) = &self.can_skip_until {
+            write!(f, "CAN-SKIP-UNTIL={}", can_skip_until)?;
+        }
+        if let Some(can_skip_dateranges) = &self.can_skip_dateranges {
+            write!(f, ",CAN-SKIP-DATERANGES={}", can_skip_dateranges)?;
+        }
+        if let Some(hold_back) = &self.hold_back {
+            write!(f, ",HOLD-BACK={}", hold_back)?;
+        }
+        if let Some(part_hold_back) = &self.part_hold_back {
+            write!(f, ",PART-HOLD-BACK={}", part_hold_back)?;
+        }
+        if self.can_block_reload {
+            write!(f, ",CAN-BLOCK-RELOAD")?;
+        }
+        Ok(())
     }
 }
 

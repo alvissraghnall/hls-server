@@ -124,6 +124,14 @@ impl MediaSegment {
         self.title.clone()
     }
 
+    pub(crate) fn get_uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    pub(crate) fn get_media_sequence(&self) -> Option<u64> {
+        self.media_sequence
+    }
+
 }
 
 impl PendingSegment {

@@ -362,7 +362,7 @@ impl PlaylistParser {
 }
 
 impl Playlist {
-    pub(crate) fn as_media (&self) -> Option<&MediaPlaylist> {
+    pub(crate) fn as_media(&self) -> Option<&MediaPlaylist> {
         if let Playlist::Media(media) = self {
             Some(media)
         } else {
@@ -370,20 +370,21 @@ impl Playlist {
         }
     }
 
-    pub(crate) fn as_multivariant (&self) -> Option<&MultivariantPlaylist> {
+    pub(crate) fn as_multivariant(&self) -> Option<&MultivariantPlaylist> {
         if let Playlist::Multivariant(multivariant) = self {
             Some(multivariant)
         } else {
             None
         }
     }
-
 }
 
 #[cfg(test)]
 mod tests {
 
     use std::path::Path;
+
+    use crate::{media::PlayListType, uri::Uri};
 
     use super::*;
 
@@ -402,23 +403,31 @@ mod tests {
                 assert!(matches!(p, Playlist::Media(_)));
 
                 p.as_media().map(|media| {
-
                     println!("{}", media.segments.len());
-                    assert!(media.tags.contains(&MediaTag::Shared(SharedTag::Version(3))));
-                    assert!(media.tags.contains(&MediaTag::Exclusive(MediaExclusiveTag::TargetDuration(10))));
+                    assert!(
+                        media
+                            .tags
+                            .contains(&MediaTag::Shared(SharedTag::Version(3)))
+                    );
+                    assert!(
+                        media
+                            .tags
+                            .contains(&MediaTag::Exclusive(MediaExclusiveTag::TargetDuration(10)))
+                    );
                     let mut iter = media.segments.iter();
                     assert_eq!(iter.next().unwrap().get_duration(), 9.009);
                     assert_eq!(iter.next().unwrap().get_duration(), 9.009);
                     assert_eq!(iter.next().unwrap().get_duration(), 3.003);
-                    assert_eq!(media.tags.last(), Some(&MediaTag::Exclusive(MediaExclusiveTag::EndList)));
+                    assert_eq!(
+                        media.tags.last(),
+                        Some(&MediaTag::Exclusive(MediaExclusiveTag::EndList))
+                    );
                 });
-                
             }
             Err(e) => panic!("Failed due to: {:?}", e),
         }
     }
 
-    
     #[test]
     fn media_with_tags() {
         let playlist_file = Path::new(ROOT)
@@ -432,18 +441,57 @@ mod tests {
                 assert!(matches!(p, Playlist::Media(_)));
 
                 p.as_media().map(|media| {
-
                     println!("{}", media.segments.len());
-                    assert!(media.tags.contains(&MediaTag::Shared(SharedTag::Version(7))));
-                    assert!(media.tags.contains(&MediaTag::Shared(SharedTag::IndependentSegments)));
-                    assert!(media.tags.contains(&MediaTag::Exclusive(MediaExclusiveTag::TargetDuration(8))));
-                    let mut iter = media.segments.iter();
-                    assert_eq!(iter.next().unwrap().get_duration(), 8.000);
-                    assert_eq!(iter.next().unwrap().get_duration(), 8.000);
-                    assert_eq!(iter.next().unwrap().get_duration(), 8.000);
-                    assert_eq!(media.tags.last(), Some(&MediaTag::Exclusive(MediaExclusiveTag::EndList)));
+                    assert!(
+                        media
+                            .tags
+                            .contains(&MediaTag::Shared(SharedTag::Version(7)))
+                    );
+                    assert!(
+                        media
+                            .tags
+                            .contains(&MediaTag::Shared(SharedTag::IndependentSegments))
+                    );
+                    assert!(media.tags.contains(&MediaTag::Shared(SharedTag::Start {
+                        time_offset: 0.0,
+                        precise: true
+                    })));
+                    assert!(
+                        media
+                            .tags
+                            .contains(&MediaTag::Exclusive(MediaExclusiveTag::TargetDuration(8)))
+                    );
+                    assert!(
+                        media
+                            .tags
+                            .contains(&MediaTag::Exclusive(MediaExclusiveTag::MediaSequence(42)))
+                    );
+                    assert!(media.tags.contains(&MediaTag::Exclusive(
+                        MediaExclusiveTag::PlaylistType(PlayListType::Vod)
+                    )));
+                    let iter = media.segments.iter();
+
+                    for (i, seg) in iter.enumerate() {
+                        println!("{:?}", seg);
+                        assert_eq!(seg.get_duration(), 8.000);
+                        assert_eq!(
+                            seg.get_uri(),
+                            &<&str as Into<Uri>>::into(
+                                format!("segment-000{}.ts", i + 1).as_str().into()
+                            )
+                        );
+                        if i == 0 {
+                            assert_eq!(seg.get_title(), Some("Episode intro".into()));
+                        } else {
+                            assert_eq!(seg.get_title(), Some(format!("Episode segment {}", i + 1)));
+                        }
+                    }
+
+                    assert_eq!(
+                        media.tags.last(),
+                        Some(&MediaTag::Exclusive(MediaExclusiveTag::EndList))
+                    );
                 });
-                
             }
             Err(e) => panic!("Failed due to: {:?}", e),
         }
