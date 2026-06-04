@@ -1,9 +1,10 @@
-use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone as _, Utc};
+use std::str::FromStr;
+
+use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone as _};
 
 use crate::{
     attribute_list::{AttributeList, parse_attribute_list},
     error::ParseError,
-    media,
     uri::Uri,
 };
 
@@ -11,7 +12,7 @@ use crate::{
 pub(crate) struct MediaSegment {
     uri: Uri,
     byte_range: Option<ByteRange>, // not entirely sure about this just yet
-    duration: f32,                 // trying not to use floats, but gats to
+    duration: DurationValue,       // trying not to use floats, but gats to
     title: Option<String>,
     media_sequence: Option<u64>,
     discontinuity: bool,
@@ -27,6 +28,12 @@ pub(crate) struct MediaSegment {
 pub(crate) struct ByteRange {
     len: u64,
     offset: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DurationValue {
+    Int(u32),
+    Float(f32),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,7 +79,7 @@ pub(crate) struct PartialSegment {
 }
 
 pub(crate) struct PendingSegment {
-    duration: Option<f32>, // compulsory // should be int for compat v < 3
+    duration: Option<DurationValue>, // compulsory // should be int for compat v < 3
     title: Option<String>,
     byte_range: Option<ByteRange>,
     discontinuity: bool,
@@ -88,7 +95,7 @@ impl MediaSegment {
     pub(crate) fn new(
         uri: Uri,
         byte_range: Option<ByteRange>,
-        duration: f32,
+        duration: DurationValue,
         title: Option<String>,
         media_sequence: Option<u64>,
         discontinuity: bool,
@@ -116,12 +123,16 @@ impl MediaSegment {
     }
 
     #[inline(always)]
-    pub(crate) fn get_duration(&self) -> f32 {
-        self.duration
+    pub(crate) fn get_duration(&self) -> &DurationValue {
+        &self.duration
     }
 
     pub(crate) fn get_title(&self) -> Option<String> {
         self.title.clone()
+    }
+
+    pub(crate) fn get_byte_range(&self) -> Option<&ByteRange> {
+        self.byte_range.as_ref()
     }
 
     pub(crate) fn get_uri(&self) -> &Uri {
@@ -132,6 +143,9 @@ impl MediaSegment {
         self.media_sequence
     }
 
+    pub(crate) fn get_key(&self) -> Option<&Key> {
+        self.key.as_ref()
+    }
 }
 
 impl PendingSegment {
@@ -163,9 +177,10 @@ impl PendingSegment {
         match line {
             tag if tag.starts_with("#EXTINF:") => {
                 let extinf = tag["#EXTINF:".len()..].splitn(2, ',').collect::<Vec<_>>();
-                let duration = extinf[0]
-                    .parse::<f32>()
-                    .map_err(|_| ParseError::InvalidLine(line.to_string()))?;
+                // let duration = extinf[0]
+                //     .parse::<f32>()
+                //     .map_err(|_| ParseError::InvalidLine(line.to_string()))?;
+                let duration = extinf[0].parse()?;
                 let title = if extinf.len() == 2 {
                     Some(extinf[1].to_string())
                 } else {
@@ -280,6 +295,10 @@ impl Key {
 
     pub(crate) fn get_uri(&self) -> &Uri {
         &self.uri
+    }
+
+    pub(crate) fn get_iv(&self) -> Option<&Vec<u8>> {
+        self.iv.as_ref()
     }
 }
 
@@ -487,6 +506,56 @@ impl TryFrom<AttributeList> for PartialSegment {
             independent,
             uri,
         })
+    }
+}
+
+impl FromStr for DurationValue {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.contains('.') || s.contains('e') || s.contains('E') {
+            Ok(Self::Float(s.parse()?))
+        } else {
+            match s.parse::<u32>() {
+                Ok(n) => Ok(Self::Int(n)),
+                Err(_) => Ok(Self::Float(s.parse()?)),
+            }
+        }
+    }
+}
+
+impl ToString for DurationValue {
+    fn to_string(&self) -> String {
+        match self {
+            DurationValue::Int(i) => i.to_string(),
+            DurationValue::Float(f) => f.to_string(),
+        }
+    }
+}
+
+impl PartialEq<f32> for DurationValue {
+    fn eq(&self, other: &f32) -> bool {
+        match self {
+            DurationValue::Int(n) => (*n as f32) == *other,
+            DurationValue::Float(n) => *n == *other,
+        }
+    }
+}
+
+impl DurationValue {
+    pub(crate) fn round(&self) -> i64 {
+        match self {
+            DurationValue::Int(n) => *n as i64,
+            DurationValue::Float(n) => n.round() as i64,
+        }
+    }
+}
+
+impl PartialEq<u32> for DurationValue {
+    fn eq(&self, other: &u32) -> bool {
+        match self {
+            DurationValue::Int(n) => n == other,
+            DurationValue::Float(n) => *n == (*other as f32),
+        }
     }
 }
 

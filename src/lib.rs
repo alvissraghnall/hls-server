@@ -13,6 +13,8 @@ mod segment;
 mod shared;
 mod uri;
 mod parser;
+mod push_line;
+mod validation;
 
 static CRLF: &'static str = "\r\n";
 

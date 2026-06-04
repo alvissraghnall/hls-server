@@ -93,22 +93,35 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
 impl ToString for SharedTag {
     fn to_string(&self) -> String {
         match self {
-            SharedTag::Version(v) => format!("#EXT-X-VERSION:{}{}", v, CRLF),
-            SharedTag::IndependentSegments => format!("#EXT-X-INDEPENDENT-SEGMENTS{}", CRLF),
+            SharedTag::Version(v) => format!("#EXT-X-VERSION:{}", v),
+            SharedTag::IndependentSegments => format!("#EXT-X-INDEPENDENT-SEGMENTS"),
             SharedTag::Start {
                 precise,
                 time_offset,
             } => format!(
-                "#EXT-X-START:PRECISE={},TIME-OFFSET={}{}",
-                precise, time_offset, CRLF
+                "#EXT-X-START:PRECISE={},TIME-OFFSET={}",
+                precise, time_offset
             ),
-            SharedTag::Variable(var) => format!("#EXT-X-DEFINE:{}{}", var, CRLF),
+            SharedTag::Variable(var) => format!("#EXT-X-DEFINE:{}", var),
         }
     }
 }
 
 impl Tag for SharedTag {
     fn validate(&self) -> Result<(), ValidationError> {
+        match self {
+            // cant do this here because we have to check other
+            // tags independent of this one. ideally, we do this in
+            // Playlist impl block. let's see.
+            SharedTag::Version(_) => {}
+            SharedTag::Variable(play_list_variable_definition) => todo!(),
+            SharedTag::IndependentSegments => todo!(),
+            SharedTag::Start {
+                precise,
+                time_offset,
+            } => todo!(),
+        };
+
         Ok(())
     }
 }

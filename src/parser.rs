@@ -1,11 +1,12 @@
 use itertools::Itertools;
 
 use crate::{
-    error::{self, ParseError},
+    error::{self, ParseError, ValidationError},
     media::{self, MediaExclusiveTag, MediaPlaylist, MediaTag, parse_media_exclusive_tag},
     multivariant::{MultivariantExclusiveTag, MultivariantPlaylist},
     parser::PlaylistKind::Media,
     playlist::SharedTag,
+    push_line::PushLine,
     read_write,
     segment::{MediaSegment, ParseSegmentState},
     shared::parse_shared_tag,
@@ -362,6 +363,8 @@ impl PlaylistParser {
 }
 
 impl Playlist {
+    pub(crate) const EXTM3U: &'static str = "#EXTM3U";
+
     pub(crate) fn as_media(&self) -> Option<&MediaPlaylist> {
         if let Playlist::Media(media) = self {
             Some(media)
@@ -376,6 +379,20 @@ impl Playlist {
         } else {
             None
         }
+    }
+}
+
+impl ToString for Playlist {
+    fn to_string(&self) -> String {
+        let mut playlist_str = String::new();
+        playlist_str.push_line(Self::EXTM3U);
+
+        match self {
+            Playlist::Media(media_playlist) => {}
+            Playlist::Multivariant(multivariant_playlist) => {}
+        }
+
+        playlist_str
     }
 }
 
@@ -415,9 +432,9 @@ mod tests {
                             .contains(&MediaTag::Exclusive(MediaExclusiveTag::TargetDuration(10)))
                     );
                     let mut iter = media.segments.iter();
-                    assert_eq!(iter.next().unwrap().get_duration(), 9.009);
-                    assert_eq!(iter.next().unwrap().get_duration(), 9.009);
-                    assert_eq!(iter.next().unwrap().get_duration(), 3.003);
+                    assert_eq!(*iter.next().unwrap().get_duration(), 9.009);
+                    assert_eq!(*iter.next().unwrap().get_duration(), 9.009);
+                    assert_eq!(*iter.next().unwrap().get_duration(), 3.003);
                     assert_eq!(
                         media.tags.last(),
                         Some(&MediaTag::Exclusive(MediaExclusiveTag::EndList))
@@ -473,7 +490,7 @@ mod tests {
 
                     for (i, seg) in iter.enumerate() {
                         println!("{:?}", seg);
-                        assert_eq!(seg.get_duration(), 8.000);
+                        assert_eq!(*seg.get_duration(), 8.000);
                         assert_eq!(
                             seg.get_uri(),
                             &<&str as Into<Uri>>::into(

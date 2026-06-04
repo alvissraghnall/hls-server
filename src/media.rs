@@ -8,7 +8,7 @@ use crate::{
     error::{ParseError, ValidationError},
     multivariant::{MultivariantPlaylist, MultivariantTag},
     playlist::{PlayListVariableDefinition, SharedTag},
-    segment::MediaSegment,
+    segment::{ByteRange, MediaSegment},
     uri::decode,
 };
 
@@ -269,7 +269,7 @@ impl MediaPlaylist {
                 if self
                     .segments
                     .iter()
-                    .any(|s| s.get_duration().round() > *d as f32)
+                    .any(|s| s.get_duration().round() > *d as i64)
                 {
                     return Err(ValidationError::InvalidMultivariantAttribute);
                 }
@@ -283,19 +283,19 @@ impl MediaPlaylist {
 impl ToString for MediaExclusiveTag {
     fn to_string(&self) -> String {
         match self {
-            MediaExclusiveTag::TargetDuration(d) => format!("#EXT-X-TARGETDURATION:{}{}", d, CRLF),
-            MediaExclusiveTag::MediaSequence(nu) => format!("#EXT-X-MEDIA-SEQUENCE:{}{}", nu, CRLF),
+            MediaExclusiveTag::TargetDuration(d) => format!("#EXT-X-TARGETDURATION:{}", d),
+            MediaExclusiveTag::MediaSequence(nu) => format!("#EXT-X-MEDIA-SEQUENCE:{}", nu),
             MediaExclusiveTag::DiscontinuitySequence(nu) => {
-                format!("#EXT-X-DISCONTINUITY-SEQUENCE:{}{}", nu, CRLF)
+                format!("#EXT-X-DISCONTINUITY-SEQUENCE:{}", nu)
             }
-            MediaExclusiveTag::EndList => format!("#EXT-X-ENDLIST{}", CRLF),
-            MediaExclusiveTag::PlaylistType(typ) => format!("#EXT-X-PLAYLIST-TYPE:{}{}", typ, CRLF),
-            MediaExclusiveTag::IFramesOnly => format!("#EXT-X-IFRAMES-ONLY{}", CRLF),
+            MediaExclusiveTag::EndList => format!("#EXT-X-ENDLIST"),
+            MediaExclusiveTag::PlaylistType(typ) => format!("#EXT-X-PLAYLIST-TYPE:{}", typ),
+            MediaExclusiveTag::IFramesOnly => format!("#EXT-X-IFRAMES-ONLY"),
             MediaExclusiveTag::PartInf { part_target } => {
-                format!("#EXT-X-PART-INF:PART-TARGET={}{}", part_target, CRLF)
+                format!("#EXT-X-PART-INF:PART-TARGET={}", part_target)
             }
             MediaExclusiveTag::ServerControl(ctrl) => {
-                format!("#EXT-X-SERVER-CONTROL:{}{}", ctrl, CRLF)
+                format!("#EXT-X-SERVER-CONTROL:{}", ctrl)
             }
         }
     }
@@ -478,6 +478,24 @@ impl TryFrom<AttributeList> for ServerControl {
             part_hold_back,
             can_block_reload,
         })
+    }
+}
+
+impl ToString for MediaPlaylist {
+    fn to_string(&self) -> String {
+        // hmm now i think of it: tags vs segments -- are their original
+        // order to be preserved ? can i interchange them ?? hmmmmmmmmmm///
+        // 
+        unimplemented!()
+    }
+}
+
+impl ToString for MediaTag {
+    fn to_string(&self) -> String {
+        match self {
+            MediaTag::Shared(shared_tag) => shared_tag.to_string(),
+            MediaTag::Exclusive(media_exclusive_tag) => media_exclusive_tag.to_string(),
+        }
     }
 }
 

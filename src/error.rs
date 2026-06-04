@@ -1,6 +1,8 @@
 use core::fmt;
 use std::fmt::{Display, Formatter};
 
+use crate::playlist::SharedTag;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {
     pub line: usize,
@@ -70,13 +72,15 @@ pub enum ParseError {
     NoPendingSegment,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum ValidationError {
     UnknownImportedVariable(String),
     ImportMediaWithoutMultivariant,
     InvalidUri,
     InvalidMultivariantAttribute,
     InvalidTargetDuration,
+    MissingRequiredTag(String),
+    InvalidSharedTag(SharedTag, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,18 +122,30 @@ impl From<ParseError> for PlaylistReadError {
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParseError::MixedPlaylistTypes => write!(f, "Mixed playlist types, e.g. Multivariant tags in a media playlist, or vice versa."),
+            ParseError::MixedPlaylistTypes => write!(
+                f,
+                "Mixed playlist types, e.g. Multivariant tags in a media playlist, or vice versa."
+            ),
             ParseError::CodecError(e) => write!(f, "codec: {e}"),
             ParseError::InvalidLine(line) => write!(f, "Invalid line: {}", line),
-            ParseError::UnknownTag { tag, span } => write!(f, "Unknown tag: {} at {}:{}", tag, span.line, span.column),
+            ParseError::UnknownTag { tag, span } => {
+                write!(f, "Unknown tag: {} at {}:{}", tag, span.line, span.column)
+            }
             ParseError::DuplicateTag(tag) => write!(f, "Duplicate tag: {}", tag),
             ParseError::ExpectedQuotedString => write!(f, "Expected quoted string"),
             ParseError::InvalidQuotedString { value, reason } => {
                 write!(f, "Invalid quoted string: {value}")
             }
             ParseError::UnknownAttribute(attr) => write!(f, "Unknown attribute: {}", attr),
-            ParseError::InvalidAttributeValue { attribute, value, expected } => {
-                write!(f, "Invalid attribute value for {attribute}: {value} (expected: {expected})")
+            ParseError::InvalidAttributeValue {
+                attribute,
+                value,
+                expected,
+            } => {
+                write!(
+                    f,
+                    "Invalid attribute value for {attribute}: {value} (expected: {expected})"
+                )
             }
             ParseError::InvalidAttributeDefinition { definition } => {
                 write!(f, "Invalid attribute definition: {definition}")
@@ -138,18 +154,24 @@ impl std::fmt::Display for ParseError {
                 write!(f, "Invalid URI: {source}")
             }
             ParseError::NoPendingSegment => write!(f, "No pending segment"),
-            ParseError::MissingAttribute { attribute } => write!(f, "Missing attribute: {}", attribute),
-            ParseError::InvalidEnumeratedString { value, expected } => write!(f, "Invalid enumerated string: {value} (expected one of: {})", expected.join(", ")),
+            ParseError::MissingAttribute { attribute } => {
+                write!(f, "Missing attribute: {}", attribute)
+            }
+            ParseError::InvalidEnumeratedString { value, expected } => write!(
+                f,
+                "Invalid enumerated string: {value} (expected one of: {})",
+                expected.join(", ")
+            ),
             ParseError::InvalidHexSequence { value } => write!(f, "Invalid hex sequence: {value}"),
-            ParseError::TooManyAttributes {
-                expected,
-                found,
-            } => write!(f, "Too many attributes than required. Expected: {expected}, found: {found}"),
+            ParseError::TooManyAttributes { expected, found } => write!(
+                f,
+                "Too many attributes than required. Expected: {expected}, found: {found}"
+            ),
             ParseError::MediaSequenceAfterSegment => write!(f, "Media sequence after segment"),
-            ParseError::ExpectedDecimalInteger { found } => write!(f, "Expected decimal integer, found: {found}"),
-            ParseError::InvalidDateTime {
-                value,
-            } => write!(f, "Invalid DateTime: {value}"),
+            ParseError::ExpectedDecimalInteger { found } => {
+                write!(f, "Expected decimal integer, found: {found}")
+            }
+            ParseError::InvalidDateTime { value } => write!(f, "Invalid DateTime: {value}"),
             ParseError::InvalidDecimalResolution { value } => {
                 write!(f, "Invalid decimal resolution: {value}")
             }
@@ -171,6 +193,10 @@ impl std::fmt::Display for ValidationError {
             }
             ValidationError::InvalidTargetDuration => write!(f, "Invalid target duration"),
             ValidationError::InvalidUri => write!(f, "Invalid URI"),
+            ValidationError::MissingRequiredTag(t) => write!(f, "Missing Required Tag: {t}"),
+            ValidationError::InvalidSharedTag(shared, reason) => {
+                write!(f, "Invalid Shared Tag ({}): {reason}", shared.to_string())
+            }
         }
     }
 }
@@ -236,7 +262,7 @@ impl Display for UriError {
 }
 
 impl std::error::Error for UriError {}
- 
+
 #[derive(Debug)]
 pub enum SupplementalCodecParseError {
     Empty,
@@ -250,28 +276,31 @@ pub enum SupplementalCodecParseError {
         inner: Box<SupplementalCodecParseError>,
     },
 }
- 
+
 impl fmt::Display for SupplementalCodecParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Empty                    => write!(f, "empty supplemental codec string"),
-            Self::Codec(e)                 => write!(f, "invalid codec: {e}"),
-            Self::InvalidBrand(b)          => write!(f, "invalid compatibility brand: {b:?} (must be 4 ASCII bytes)"),
-            Self::Entry { index, inner }   => write!(f, "entry {index}: {inner}"),
+            Self::Empty => write!(f, "empty supplemental codec string"),
+            Self::Codec(e) => write!(f, "invalid codec: {e}"),
+            Self::InvalidBrand(b) => write!(
+                f,
+                "invalid compatibility brand: {b:?} (must be 4 ASCII bytes)"
+            ),
+            Self::Entry { index, inner } => write!(f, "entry {index}: {inner}"),
         }
     }
 }
- 
+
 impl std::error::Error for SupplementalCodecParseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Codec(e)              => Some(e),
-            Self::Entry { inner, .. }   => Some(inner),
-            _                           => None,
+            Self::Codec(e) => Some(e),
+            Self::Entry { inner, .. } => Some(inner),
+            _ => None,
         }
     }
 }
- 
+
 impl From<CodecParseError> for SupplementalCodecParseError {
     fn from(e: CodecParseError) -> Self {
         Self::Codec(e)
@@ -282,12 +311,12 @@ impl From<SupplementalCodecParseError> for ParseError {
     fn from(value: SupplementalCodecParseError) -> Self {
         match value {
             SupplementalCodecParseError::Codec(e) => ParseError::CodecError(e),
-            SupplementalCodecParseError::InvalidBrand(b) => ParseError::CodecError(CodecParseError::InvalidFourcc(b)),
+            SupplementalCodecParseError::InvalidBrand(b) => {
+                ParseError::CodecError(CodecParseError::InvalidFourcc(b))
+            }
             _ => ParseError::CodecError(CodecParseError::Empty),
         }
-    
     }
-    
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -83,7 +83,7 @@ enum Cue {
 
 impl Default for SharedTag {
     fn default() -> Self {
-        Self::Version(0)
+        Self::Version(1)
     }
 }
 
