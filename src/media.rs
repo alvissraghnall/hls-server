@@ -290,7 +290,7 @@ impl ToString for MediaExclusiveTag {
             }
             MediaExclusiveTag::EndList => format!("#EXT-X-ENDLIST"),
             MediaExclusiveTag::PlaylistType(typ) => format!("#EXT-X-PLAYLIST-TYPE:{}", typ),
-            MediaExclusiveTag::IFramesOnly => format!("#EXT-X-IFRAMES-ONLY"),
+            MediaExclusiveTag::IFramesOnly => format!("#EXT-X-I-FRAMES-ONLY"),
             MediaExclusiveTag::PartInf { part_target } => {
                 format!("#EXT-X-PART-INF:PART-TARGET={}", part_target)
             }
@@ -369,7 +369,7 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
                 )));
             }
         }
-        s if line.starts_with("#EXT-X-IFRAMES-ONLY:") => {
+        s if line.starts_with("#EXT-X-I-FRAMES-ONLY") => {
             return Ok(MediaExclusiveTag::IFramesOnly);
         }
         s if line.starts_with("#EXT-X-PART-INF:") => {

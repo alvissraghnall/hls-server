@@ -1,5 +1,5 @@
 #EXTM3U
-#EXT-X-TARGETDURATION:10
+#-TARGETDURATION:10
 #EXT-X-VERSION:3
 #EXTINF:9.009,
 http://media.example.com/first.ts

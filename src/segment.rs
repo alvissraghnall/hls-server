@@ -146,6 +146,10 @@ impl MediaSegment {
     pub(crate) fn get_key(&self) -> Option<&Key> {
         self.key.as_ref()
     }
+
+    pub(crate) fn get_map(&self) -> Option<&Map> {
+        self.map.as_ref()
+    }
 }
 
 impl PendingSegment {
@@ -299,6 +303,14 @@ impl Key {
 
     pub(crate) fn get_iv(&self) -> Option<&Vec<u8>> {
         self.iv.as_ref()
+    }
+
+    pub(crate) fn get_key_format(&self) -> Option<&str> {
+        self.key_format.as_deref()
+    }
+
+    pub(crate) fn get_key_format_versions(&self) -> &[u16] {
+        self.key_format_versions.as_ref()
     }
 }
 

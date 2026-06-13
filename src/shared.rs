@@ -7,7 +7,7 @@ use crate::{
     playlist::{PlayListVariableDefinition, SharedTag},
 };
 
-pub(crate) trait Tag {
+pub trait Tag {
     // fn from_str(s: &str) -> Result<Self, ParseError>
     // where
     //     Self: Sized;
