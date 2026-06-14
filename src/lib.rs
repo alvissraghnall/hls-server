@@ -28,7 +28,8 @@ static CRLF: &'static str = "\r\n";
  * 3.1 if line starts with #, parse it as a tag
  * 3.1.1 say, tag is #EXT-X-VERSION for instance:
  * 3.1.1.1 parse the version number as SharedTag
- * 3.1.1.2 append to MultivariantPlaylist
+ * 3.1.1.2 append to lay
+ * laylist
  * 3.1.1.3 if we encounter same tag again, throw an error
  * 3.1.1.4 but parse_shared_tag only accepts line as input
  * 3.1.1.5 in essence, it can;t tell if it has seen the tag before

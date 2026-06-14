@@ -207,10 +207,10 @@ impl MediaPlaylist {
                             return Err(ValidationError::ImportMediaWithoutMultivariant);
                         }
                         Some(master) => {
-                            if !master.tags.iter().any(|t| match t {
-                                MultivariantTag::Shared(SharedTag::Variable(
+                            if !master.shared_tags.iter().any(|t| match t {
+                                SharedTag::Variable(
                                     PlayListVariableDefinition::NameValue { name, .. },
-                                )) => name == v.get_name(),
+                                ) => name == v.get_name(),
 
                                 _ => false,
                             }) {

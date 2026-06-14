@@ -1,7 +1,7 @@
 use crate::{
     error::ValidationError,
     media::{MediaExclusiveTag, MediaTag},
-    multivariant::{Media, MultivariantExclusiveTag, MultivariantTag},
+    multivariant::{InStreamId::{self, Service}, Media, MultivariantExclusiveTag, MultivariantTag},
     parser::Playlist,
     playlist::SharedTag,
     segment::{DurationValue, Method},
@@ -112,7 +112,39 @@ impl Tag for Playlist {
             }
 
             Playlist::Multivariant(multivariant_playlist) => {
-                let has_service_attr = multivariant_playlist.tags.contains(panic!());
+                multivariant_playlist.exclusive_tags.iter().try_for_each(|t| match t {
+                    MultivariantExclusiveTag::Media(media) => {
+                        require_version!(
+                            version,
+                            media.get_instream_id().map(|iid| iid.is_service()).unwrap_or(false),
+                            7,
+                            "A Multivariant Playlist MUST indicate an EXT-X-VERSION of 7 or higher if it \
+                             contains a 'SERVICE' values for the INSTREAM-ID attribute of the EXT-X-MEDIA \
+                             tag."
+                        );
+
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                })?;
+                // .map_err(|e| ValidationError::MissingRequiredTag(e.to_string()))?;
+
+                multivariant_playlist.shared_tags.iter().try_for_each(|t| match t {
+                    SharedTag::Variable(_) => {
+                        require_version!(
+                            version,
+                            true,
+                            8,
+                            "A Multivariant Playlist MUST indicate an EXT-X-VERSION of 8 or higher if it \
+                             contains Variable substitution."
+                        );
+
+                        Ok(())
+                    }
+                    
+                    _ => Ok(()),
+                })?;
+                
             }
         }
 
@@ -127,8 +159,8 @@ impl Playlist {
                 MediaTag::Shared(SharedTag::Version(v)) => Some(v),
                 _ => None,
             }),
-            Playlist::Multivariant(p) => p.tags.iter().find_map(|tag| match tag {
-                MultivariantTag::Shared(SharedTag::Version(v)) => Some(v),
+            Playlist::Multivariant(p) => p.shared_tags.iter().find_map(|tag| match tag {
+                SharedTag::Version(v) => Some(v),
                 _ => None,
             }),
         }

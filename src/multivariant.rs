@@ -40,15 +40,17 @@ enum SessionDataType {
 impl Default for MultivariantPlaylist {
     fn default() -> Self {
         Self {
-            tags: Vec::new(),
+            shared_tags: Vec::new(),
+            exclusive_tags: Vec::new(),
             variables: Vec::new(),
         }
     }
 }
 
 pub struct MultivariantPlaylist {
-    pub tags: Vec<MultivariantTag>,
-    pub variables: Vec<PlayListVariableDefinition>,
+    pub(crate) shared_tags: Vec<SharedTag>,
+    pub(crate) exclusive_tags: Vec<MultivariantExclusiveTag>,
+    pub(crate) variables: Vec<PlayListVariableDefinition>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -319,28 +321,28 @@ impl MultivariantPlaylist {
         match tag {
             SharedTag::Version(v) => {
                 if self
-                    .tags
+                    .shared_tags
                     .iter()
-                    .any(|t| matches!(t, MultivariantTag::Shared(SharedTag::Version(_))))
+                    .any(|t| matches!(t, SharedTag::Version(_)))
                 {
                     return Err(ParseError::DuplicateTag(String::from("EXT-X-VERSION")));
                 }
 
-                self.tags.push(MultivariantTag::Shared(tag));
+                self.shared_tags.push(tag);
             }
 
             SharedTag::IndependentSegments => {
                 if self
-                    .tags
+                    .shared_tags
                     .iter()
-                    .any(|t| matches!(t, MultivariantTag::Shared(SharedTag::IndependentSegments)))
+                    .any(|t| matches!(t, SharedTag::IndependentSegments))
                 {
                     return Err(ParseError::DuplicateTag(String::from(
                         "EXT-X-INDEPENDENT-SEGMENTS",
                     )));
                 }
 
-                self.tags.push(MultivariantTag::Shared(tag));
+                self.shared_tags.push(tag);
             }
 
             SharedTag::Variable(v) => match v {
@@ -371,17 +373,17 @@ impl MultivariantPlaylist {
                 precise: _,
                 time_offset: _,
             } => {
-                if self.tags.iter().any(|t| {
+                if self.shared_tags.iter().any(|t| {
                     matches!(
                         t,
-                        MultivariantTag::Shared(SharedTag::Start { precise: _, .. })
+                        SharedTag::Start { precise: _, .. }
                     )
                 }) {
                     return Err(ParseError::DuplicateTag(String::from(
                         "EXT-X-START:PRECISE",
                     )));
                 }
-                self.tags.push(MultivariantTag::Shared(tag));
+                self.shared_tags.push(tag);
             }
         }
 
@@ -389,13 +391,13 @@ impl MultivariantPlaylist {
     }
 
     pub(crate) fn apply_exclusive_tag(&mut self, tag: MultivariantExclusiveTag) -> Result<(), ParseError> {
-        self.tags.push(MultivariantTag::Exclusive(tag));
+        self.exclusive_tags.push(tag);
         Ok(())
     }
 
     fn validate(&mut self, ctx: &PlaylistContext) -> Result<(), ValidationError> {
-        for tag in &self.tags {
-            if let MultivariantTag::Shared(SharedTag::Variable(v)) = tag {
+        for tag in &self.shared_tags {
+            if let SharedTag::Variable(v) = tag {
                 match v {
                     PlayListVariableDefinition::Import { .. } => {
                         return Err(ValidationError::InvalidMultivariantAttribute);
@@ -1599,6 +1601,26 @@ impl MultivariantTag {
     }
 }
 
+impl Media {
+    pub fn get_instream_id(&self) -> Option<&InStreamId> {
+        self.instream_id.as_ref()
+    }
+}
+
+impl InStreamId {
+    pub fn is_service(&self) -> bool {
+        matches!(self, InStreamId::Service(_))
+    }
+
+    pub fn is_cc(&self) -> bool {
+        matches!(self, InStreamId::CC(_))
+    }
+
+    pub fn is_other(&self) -> bool {
+        matches!(self, InStreamId::Other(_))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1608,7 +1630,7 @@ mod tests {
     fn test_multivariant_playlist_apply_version() {
         let mut playlist = MultivariantPlaylist::default();
         playlist.apply_shared_tag(SharedTag::Version(3)).unwrap();
-        assert_eq!(playlist.tags.len(), 1);
+        assert_eq!(playlist.shared_tags.len(), 1);
 
         assert!(playlist.apply_shared_tag(SharedTag::Version(4)).is_err());
     }
