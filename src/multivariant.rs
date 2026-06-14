@@ -13,6 +13,7 @@ use crate::{
     uri::{Uri, decode},
 };
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct SessionData {
     data_id: String,
     data_type: SessionDataType,
@@ -20,6 +21,7 @@ pub(crate) struct SessionData {
     language: Option<String>,
 }
 
+#[derive(Debug, PartialEq)]
 enum SessionDataFormat {
     Raw,
     Json,
@@ -29,6 +31,7 @@ struct PlaylistContext<'a> {
     uri: &'a str,
 }
 
+#[derive(Debug, PartialEq)]
 enum SessionDataType {
     Value(String),
     Uri(Uri),
@@ -48,6 +51,7 @@ pub struct MultivariantPlaylist {
     pub variables: Vec<PlayListVariableDefinition>,
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) enum MultivariantExclusiveTag {
     Media(Media),
     StreamInf(StreamInf),
@@ -139,7 +143,8 @@ pub(crate) enum HdcpLevel {
     None,
 }
 
-struct Media {
+#[derive(Debug, PartialEq)]
+pub(crate) struct Media {
     media_type: MediaType,
     uri: Option<Uri>,
     group_id: String,
@@ -209,6 +214,7 @@ pub(crate) enum MediaType {
     ClosedCaptions,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum MultivariantTag {
     Shared(SharedTag),
     Exclusive(MultivariantExclusiveTag),
@@ -1580,6 +1586,15 @@ impl FromStr for SessionDataFormat {
                 value: s.into(),
                 expected: &["JSON", "RAW"],
             }),
+        }
+    }
+}
+
+impl MultivariantTag {
+    fn shared(&self) -> Option<&SharedTag> {
+        match self {
+            MultivariantTag::Shared(tag) => Some(tag),
+            _ => None,
         }
     }
 }

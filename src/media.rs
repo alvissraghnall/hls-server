@@ -499,6 +499,15 @@ impl ToString for MediaTag {
     }
 }
 
+impl MediaTag {
+    fn shared(&self) -> Option<&SharedTag> {
+        match self {
+            MediaTag::Shared(tag) => Some(tag),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
