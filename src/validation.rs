@@ -25,6 +25,13 @@ impl Tag for Playlist {
             .version()
             .ok_or_else(|| ValidationError::MissingRequiredTag("#EXT-X-VERSION".into()))?;
 
+        // 
+        // A Playlist MUST indicate an EXT-X-VERSION of 11 or higher if it
+        // contains:
+     
+        // *  An EXT-X-DEFINE tag with a QUERYPARAM attribute.
+        
+
         match self {
             //  Note that in protocol version 6, the semantics of the EXT-
             // X-TARGETDURATION tag changed slightly.  In protocol version 5 and
@@ -33,8 +40,8 @@ impl Tag for Playlist {
             // to the nearest integer number of seconds.
             Playlist::Media(media_playlist) => {
                 let has_iframes_only = media_playlist
-                    .tags
-                    .contains(&MediaTag::Exclusive(MediaExclusiveTag::IFramesOnly));
+                    .exclusive_tags
+                    .contains(&MediaExclusiveTag::IFramesOnly);
 
                 for seg in &media_playlist.segments {
                     if let Some(key) = seg.get_key() {
@@ -109,6 +116,28 @@ impl Tag for Playlist {
                          contains the EXT-X-MAP tag in a Media Playlist that does not contain EXT-X-I-FRAMES-ONLY."
                     );
                 }
+
+                if let Some(skip) = media_playlist
+                    .media_metadata
+                    .iter()
+                    .find_map(|m| m.as_skip())
+                {
+                    require_version!(
+                        version,
+                        true,
+                        9,
+                        "A Playlist MUST indicate an EXT-X-VERSION of 9 or higher if it \
+                         contains the EXT-X-SKIP tag."
+                    );
+                
+                    require_version!(
+                        version,
+                        !skip.recently_removed_dateranges.is_empty(),
+                        10,
+                        "A Playlist MUST indicate an EXT-X-VERSION of 10 or higher if it \
+                         contains an EXT-X-SKIP tag that replaces EXT-X-DATERANGE tags in a Playlist Delta Update."
+                    );
+                }
             }
 
             Playlist::Multivariant(multivariant_playlist) => {
@@ -155,8 +184,8 @@ impl Tag for Playlist {
 impl Playlist {
     fn version(&self) -> Option<&u8> {
         match self {
-            Playlist::Media(p) => p.tags.iter().find_map(|tag| match tag {
-                MediaTag::Shared(SharedTag::Version(v)) => Some(v),
+            Playlist::Media(p) => p.shared_tags.iter().find_map(|tag| match tag {
+                SharedTag::Version(v) => Some(v),
                 _ => None,
             }),
             Playlist::Multivariant(p) => p.shared_tags.iter().find_map(|tag| match tag {

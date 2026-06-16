@@ -1,14 +1,13 @@
-use std::{fmt, str::FromStr};
+use std::{fmt::{self, Display}, str::FromStr};
 
 use crate::{
-    CRLF,
     attribute_list::{
         AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
     },
     error::{ParseError, ValidationError},
-    multivariant::{MultivariantPlaylist, MultivariantTag},
-    playlist::{PlayListVariableDefinition, SharedTag},
-    segment::{ByteRange, MediaSegment},
+    multivariant::{MultivariantPlaylist},
+    playlist::{MediaMetadata, PlayListVariableDefinition, SharedTag},
+    segment::{MediaSegment},
     uri::decode,
 };
 
@@ -36,11 +35,15 @@ pub enum MediaTag {
     Exclusive(MediaExclusiveTag),
 }
 
+#[derive(Default)]
 pub struct MediaPlaylist {
-    pub tags: Vec<MediaTag>,
+    pub shared_tags: Vec<SharedTag>,
+    pub exclusive_tags: Vec<MediaExclusiveTag>,
     pub(crate) segments: Vec<MediaSegment>,
 
     pub variables: Vec<PlayListVariableDefinition>,
+
+    pub(crate) media_metadata: Vec<MediaMetadata>,
 
     // track whether we've seen the first segment yet for
     // media sequence number validation
@@ -54,6 +57,7 @@ struct PlaylistContext<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 struct ServerControl {
     can_skip_until: Option<f64>, // value must be at least 6x target duration
     can_skip_dateranges: Option<bool>, // requires the former
@@ -62,17 +66,6 @@ struct ServerControl {
     // >= 3x target duration (SHOULD)
     part_hold_back: Option<f64>, // required if EXT-X-PART-INF is present
     can_block_reload: bool,
-}
-
-impl Default for MediaPlaylist {
-    fn default() -> Self {
-        Self {
-            tags: Vec::new(),
-            variables: Vec::new(),
-            segments: Vec::new(),
-            seen_first_segment: false,
-        }
-    }
 }
 
 impl fmt::Display for PlayListType {
@@ -111,28 +104,28 @@ impl MediaPlaylist {
         match tag {
             SharedTag::Version(v) => {
                 if self
-                    .tags
+                    .shared_tags
                     .iter()
-                    .any(|t| matches!(t, MediaTag::Shared(SharedTag::Version(_))))
+                    .any(|t| matches!(t, SharedTag::Version(_)))
                 {
                     return Err(ParseError::DuplicateTag(String::from("EXT-X-VERSION")));
                 }
 
-                self.tags.push(MediaTag::Shared(tag));
+                self.shared_tags.push(tag);
             }
 
             SharedTag::IndependentSegments => {
                 if self
-                    .tags
+                    .shared_tags
                     .iter()
-                    .any(|t| matches!(t, MediaTag::Shared(SharedTag::IndependentSegments)))
+                    .any(|t| matches!(t, SharedTag::IndependentSegments))
                 {
                     return Err(ParseError::DuplicateTag(String::from(
                         "EXT-X-INDEPENDENT-SEGMENTS",
                     )));
                 }
 
-                self.tags.push(MediaTag::Shared(tag));
+                self.shared_tags.push(tag);
             }
 
             SharedTag::Variable(v) => match v {
@@ -159,13 +152,13 @@ impl MediaPlaylist {
                 time_offset: _,
             } => {
                 if self
-                    .tags
+                    .shared_tags
                     .iter()
-                    .any(|t| matches!(t, MediaTag::Shared(SharedTag::Start { .. })))
+                    .any(|t| matches!(t, SharedTag::Start { .. }))
                 {
                     return Err(ParseError::DuplicateTag(String::from("EXT-X-START")));
                 }
-                self.tags.push(MediaTag::Shared(tag));
+                self.shared_tags.push(tag);
             }
         }
 
@@ -181,11 +174,11 @@ impl MediaPlaylist {
             | MediaExclusiveTag::PlaylistType(_)
             | MediaExclusiveTag::IFramesOnly
             | MediaExclusiveTag::PartInf { .. } => {
-                self.tags.push(MediaTag::Exclusive(tag));
+                self.exclusive_tags.push(tag);
             }
             MediaExclusiveTag::ServerControl(attrs) => {
-                self.tags
-                    .push(MediaTag::Exclusive(MediaExclusiveTag::ServerControl(attrs)));
+                self.exclusive_tags
+                    .push(MediaExclusiveTag::ServerControl(attrs));
             }
             _ => {
                 return Err(ParseError::InvalidLine(format!(
@@ -199,8 +192,8 @@ impl MediaPlaylist {
 
     fn validate(&mut self, ctx: &PlaylistContext) -> Result<(), ValidationError> {
         let master = ctx.parent_multivariant;
-        for tag in &self.tags {
-            if let MediaTag::Shared(SharedTag::Variable(v)) = tag {
+        for tag in &self.shared_tags {
+            if let SharedTag::Variable(v) = tag {
                 match v {
                     PlayListVariableDefinition::Import { .. } => match master {
                         None => {
@@ -208,9 +201,10 @@ impl MediaPlaylist {
                         }
                         Some(master) => {
                             if !master.shared_tags.iter().any(|t| match t {
-                                SharedTag::Variable(
-                                    PlayListVariableDefinition::NameValue { name, .. },
-                                ) => name == v.get_name(),
+                                SharedTag::Variable(PlayListVariableDefinition::NameValue {
+                                    name,
+                                    ..
+                                }) => name == v.get_name(),
 
                                 _ => false,
                             }) {
@@ -242,7 +236,7 @@ impl MediaPlaylist {
                         // and check if any of them match the name we're looking for
                         let var = decoded
                             .split('?')
-                            .last()
+                            .next_back()
                             .unwrap_or("")
                             .split('&') // curr: "name=value"
                             .find(|param| param.split('=').next() == Some(name));
@@ -254,48 +248,55 @@ impl MediaPlaylist {
                             ));
                         }
 
-                        self.variables.iter_mut()
-                            .find(|v| matches!(v, PlayListVariableDefinition::QueryParam { name: nom, value: _ } if var == Some(nom)))
-                            .map(|v| {
-                                if let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v {
-                                    *v = PlayListVariableDefinition::QueryParam { name: name.to_string(), value: value.to_string() };
-                                }
-                            });
+                        let var_def = self.variables.iter_mut()
+                            .find(|v| matches!(v, PlayListVariableDefinition::QueryParam { name: nom, value: _ } if var == Some(nom)));
+
+                        if let Some(v) = var_def
+                            && let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v
+                        {
+                            *v = PlayListVariableDefinition::QueryParam {
+                                name: name.to_string(),
+                                value: value.to_string(),
+                            };
+                        }
                     }
                 }
             }
+        }
 
-            if let MediaTag::Exclusive(MediaExclusiveTag::TargetDuration(d)) = tag {
-                if self
+        for tag in &self.exclusive_tags {
+            if let MediaExclusiveTag::TargetDuration(d) = tag
+                && self
                     .segments
                     .iter()
                     .any(|s| s.get_duration().round() > *d as i64)
-                {
-                    return Err(ValidationError::InvalidMultivariantAttribute);
-                }
+            {
+                return Err(ValidationError::InvalidMultivariantAttribute);
             }
         }
 
         Ok(())
     }
+
+    
 }
 
-impl ToString for MediaExclusiveTag {
-    fn to_string(&self) -> String {
+impl Display for MediaExclusiveTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MediaExclusiveTag::TargetDuration(d) => format!("#EXT-X-TARGETDURATION:{}", d),
-            MediaExclusiveTag::MediaSequence(nu) => format!("#EXT-X-MEDIA-SEQUENCE:{}", nu),
+            MediaExclusiveTag::TargetDuration(d) => write!(f, "#EXT-X-TARGETDURATION:{}", d),
+            MediaExclusiveTag::MediaSequence(nu) => write!(f, "#EXT-X-MEDIA-SEQUENCE:{}", nu),
             MediaExclusiveTag::DiscontinuitySequence(nu) => {
-                format!("#EXT-X-DISCONTINUITY-SEQUENCE:{}", nu)
+                write!(f, "#EXT-X-DISCONTINUITY-SEQUENCE:{}", nu)
             }
-            MediaExclusiveTag::EndList => format!("#EXT-X-ENDLIST"),
-            MediaExclusiveTag::PlaylistType(typ) => format!("#EXT-X-PLAYLIST-TYPE:{}", typ),
-            MediaExclusiveTag::IFramesOnly => format!("#EXT-X-I-FRAMES-ONLY"),
+            MediaExclusiveTag::EndList => write!(f, "#EXT-X-ENDLIST"),
+            MediaExclusiveTag::PlaylistType(typ) => write!(f, "#EXT-X-PLAYLIST-TYPE:{}", typ),
+            MediaExclusiveTag::IFramesOnly => write!(f, "#EXT-X-I-FRAMES-ONLY"),
             MediaExclusiveTag::PartInf { part_target } => {
-                format!("#EXT-X-PART-INF:PART-TARGET={}", part_target)
+                write!(f, "#EXT-X-PART-INF:PART-TARGET={}", part_target)
             }
             MediaExclusiveTag::ServerControl(ctrl) => {
-                format!("#EXT-X-SERVER-CONTROL:{}", ctrl)
+                write!(f, "#EXT-X-SERVER-CONTROL:{}", ctrl)
             }
         }
     }
@@ -333,11 +334,11 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
                 .and_then(|v| v.parse::<u64>().ok());
 
             if let Some(v) = media_sequence_number {
-                return Ok(MediaExclusiveTag::MediaSequence(v));
+                Ok(MediaExclusiveTag::MediaSequence(v))
             } else {
-                return Err(ParseError::InvalidLine(format!(
+                Err(ParseError::InvalidLine(format!(
                     "{line} is not valid according to HLS spec."
-                )));
+                )))
             }
         }
         s if line.starts_with("#EXT-X-DISCONTINUITY-SEQUENCE:") => {
@@ -346,15 +347,15 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
                 .and_then(|v| v.parse::<u64>().ok());
 
             if let Some(v) = discontinuity_sequence_number {
-                return Ok(MediaExclusiveTag::DiscontinuitySequence(v));
+                Ok(MediaExclusiveTag::DiscontinuitySequence(v))
             } else {
-                return Err(ParseError::InvalidLine(format!(
+                Err(ParseError::InvalidLine(format!(
                     "{line} is not valid according to HLS spec."
-                )));
+                )))
             }
         }
         s if line.starts_with("#EXT-X-ENDLIST") => {
-            return Ok(MediaExclusiveTag::EndList);
+            Ok(MediaExclusiveTag::EndList)
         }
         s if line.starts_with("#EXT-X-PLAYLIST-TYPE:") => {
             let playlist_type = s
@@ -362,15 +363,15 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
                 .and_then(|v| v.parse::<PlayListType>().ok());
 
             if let Some(v) = playlist_type {
-                return Ok(MediaExclusiveTag::PlaylistType(v));
+                Ok(MediaExclusiveTag::PlaylistType(v))
             } else {
-                return Err(ParseError::InvalidLine(format!(
+                Err(ParseError::InvalidLine(format!(
                     "{line} is not valid according to HLS spec."
-                )));
+                )))
             }
         }
         s if line.starts_with("#EXT-X-I-FRAMES-ONLY") => {
-            return Ok(MediaExclusiveTag::IFramesOnly);
+            Ok(MediaExclusiveTag::IFramesOnly)
         }
         s if line.starts_with("#EXT-X-PART-INF:") => {
             let attrs = s
@@ -433,18 +434,6 @@ impl fmt::Display for ServerControl {
     }
 }
 
-impl Default for ServerControl {
-    fn default() -> Self {
-        Self {
-            can_skip_until: None,
-            can_skip_dateranges: None,
-            hold_back: None,
-            part_hold_back: None,
-            can_block_reload: false,
-        }
-    }
-}
-
 impl TryFrom<AttributeList> for ServerControl {
     type Error = ParseError;
 
@@ -481,20 +470,20 @@ impl TryFrom<AttributeList> for ServerControl {
     }
 }
 
-impl ToString for MediaPlaylist {
-    fn to_string(&self) -> String {
+impl Display for MediaPlaylist {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // hmm now i think of it: tags vs segments -- are their original
         // order to be preserved ? can i interchange them ?? hmmmmmmmmmm///
-        // 
+        //
         unimplemented!()
     }
 }
 
-impl ToString for MediaTag {
-    fn to_string(&self) -> String {
+impl Display for MediaTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MediaTag::Shared(shared_tag) => shared_tag.to_string(),
-            MediaTag::Exclusive(media_exclusive_tag) => media_exclusive_tag.to_string(),
+            MediaTag::Shared(shared_tag) => unimplemented!(),
+            MediaTag::Exclusive(media_exclusive_tag) => media_exclusive_tag.fmt(f),
         }
     }
 }
@@ -517,7 +506,7 @@ mod tests {
     fn test_media_playlist_apply_version() {
         let mut playlist = MediaPlaylist::default();
         playlist.apply_shared_tag(SharedTag::Version(3)).unwrap();
-        assert_eq!(playlist.tags.len(), 1);
+        assert_eq!(playlist.shared_tags.len(), 1);
 
         assert!(playlist.apply_shared_tag(SharedTag::Version(4)).is_err());
     }
@@ -546,11 +535,11 @@ mod tests {
     #[test]
     fn test_media_playlist_validate_import_fail() {
         let mut playlist = MediaPlaylist::default();
-        playlist.tags.push(MediaTag::Shared(SharedTag::Variable(
+        playlist.shared_tags.push(SharedTag::Variable(
             PlayListVariableDefinition::Import {
                 name: "IMPORT_ME".to_string(),
             },
-        )));
+        ));
 
         let ctx = PlaylistContext {
             uri: "playlist.m3u8",

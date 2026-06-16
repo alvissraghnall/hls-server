@@ -22,8 +22,10 @@ pub(crate) struct SessionData {
 }
 
 #[derive(Debug, PartialEq)]
+#[derive(Default)]
 enum SessionDataFormat {
     Raw,
+    #[default]
     Json,
 }
 
@@ -37,16 +39,7 @@ enum SessionDataType {
     Uri(Uri),
 }
 
-impl Default for MultivariantPlaylist {
-    fn default() -> Self {
-        Self {
-            shared_tags: Vec::new(),
-            exclusive_tags: Vec::new(),
-            variables: Vec::new(),
-        }
-    }
-}
-
+#[derive(Default)]
 pub struct MultivariantPlaylist {
     pub(crate) shared_tags: Vec<SharedTag>,
     pub(crate) exclusive_tags: Vec<MultivariantExclusiveTag>,
@@ -132,7 +125,9 @@ pub(crate) struct AllowedCpcEntry {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub(crate) enum VideoRange {
+    #[default]
     Sdr,
     Hlg,
     Pq,
@@ -419,12 +414,12 @@ impl MultivariantPlaylist {
                         // then we check if the name matches the one we're looking for
                         // if not, we return an error
                         // in code:
-                        // url.split('?').last().unwrap_or("") returns "name=value&xx=yy&tt=lola"
+                        // url.split('?').next_back().unwrap_or("") returns "name=value&xx=yy&tt=lola"
                         // then we split by '&' to get the individual params
                         // and check if any of them match the name we're looking for
                         let var = decoded
                             .split('?')
-                            .last()
+                            .next_back()
                             .unwrap_or("")
                             .split('&') // curr: "name=value"
                             .find(|param| param.split('=').next() == Some(name));
@@ -436,13 +431,12 @@ impl MultivariantPlaylist {
                             ));
                         }
 
-                        self.variables.iter_mut()
-                            .find(|v| matches!(v, PlayListVariableDefinition::QueryParam { name: nom, value: _ } if var == Some(nom)))
-                            .map(|v| {
-                                if let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v {
-                                    *v = PlayListVariableDefinition::QueryParam { name: name.to_string(), value: value.to_string() };
-                                }
-                            });
+                        let var_def = self.variables.iter_mut()
+                            .find(|v| matches!(v, PlayListVariableDefinition::QueryParam { name: nom, value: _ } if var == Some(nom)));
+                            
+                        if let Some(v) = var_def && let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v {
+                            *v = PlayListVariableDefinition::QueryParam { name: name.to_string(), value: value.to_string() };
+                        }
                     }
                 }
             };
@@ -748,7 +742,6 @@ impl TryFrom<AttributeList> for Media {
                     .ok_or(ParseError::ExpectedDecimalInteger {
                         found: v.to_string(),
                     })
-                    .map(|x| x as u64)
             })
             .transpose()?;
 
@@ -759,7 +752,7 @@ impl TryFrom<AttributeList> for Media {
                     .ok_or(ParseError::ExpectedDecimalInteger {
                         found: v.to_string(),
                     })
-                    .map(|x| x as u64)
+                    
             })
             .transpose()?;
 
@@ -814,14 +807,14 @@ impl TryFrom<AttributeList> for Media {
                             .ok_or(ParseError::InvalidAttributeValue {
                                 attribute: "CHANNELS".into(),
                                 value: v.to_string(),
-                                expected: "a valid channel count".into(),
+                                expected: "a valid channel count",
                             })
                             .and_then(|x| {
                                 x.parse::<u64>()
                                     .map_err(|_| ParseError::InvalidAttributeValue {
                                         attribute: "CHANNELS".into(),
                                         value: v.to_string(),
-                                        expected: "a valid channel count".into(),
+                                        expected: "a valid channel count",
                                     })
                             });
 
@@ -844,7 +837,7 @@ impl TryFrom<AttributeList> for Media {
                                             .map_err(|_| ParseError::InvalidAttributeValue {
                                                 attribute: "CHANNELS".into(),
                                                 value: v.to_string(),
-                                                expected: "a valid bed identifier".into(),
+                                                expected: "a valid bed identifier",
                                             })?,
                                         s if s.starts_with("DOF") => s[4..]
                                             .parse::<u8>()
@@ -855,14 +848,14 @@ impl TryFrom<AttributeList> for Media {
                                                     Err(ParseError::InvalidAttributeValue {
                                                         attribute: "CHANNELS".into(),
                                                         value: v.to_string(),
-                                                        expected: "a valid DOF identifier".into(),
+                                                        expected: "a valid DOF identifier",
                                                     })
                                                 }
                                             })
                                             .map_err(|_| ParseError::InvalidAttributeValue {
                                                 attribute: "CHANNELS".into(),
                                                 value: v.to_string(),
-                                                expected: "a valid DOF identifier".into(),
+                                                expected: "a valid DOF identifier",
                                             })?,
                                         s => Ok(SpecialUsageIdentifier::Unknown(s.to_string())),
                                     })
@@ -927,7 +920,7 @@ impl TryFrom<AttributeList> for StreamInf {
             .ok_or(ParseError::InvalidAttributeValue {
                 attribute: "BANDWIDTH".into(),
                 value: "NONE".into(),
-                expected: "a valid bandwidth".into(),
+                expected: "a valid bandwidth",
             })?
             .as_decimal_integer()
             .ok_or(ParseError::ExpectedDecimalInteger {
@@ -950,15 +943,15 @@ impl TryFrom<AttributeList> for StreamInf {
                 v.as_decimal_floating_point()
                     .and_then(|x| {
                         if x > 0.0 {
-                            return Some(x);
+                            Some(x)
                         } else {
-                            return None;
+                            None
                         }
                     })
                     .ok_or(ParseError::InvalidAttributeValue {
                         attribute: "SCORE".into(),
                         value: v.to_string(),
-                        expected: "a positive decimal-floating-point score".into(),
+                        expected: "a positive decimal-floating-point score",
                     })
             })
             .transpose()?;
@@ -969,7 +962,7 @@ impl TryFrom<AttributeList> for StreamInf {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|x| {
-                        let mut codec = parse_codecs_attr(x);
+                        let codec = parse_codecs_attr(x);
 
                         match codec {
                             Ok(c) => Ok(c),
@@ -997,7 +990,7 @@ impl TryFrom<AttributeList> for StreamInf {
                     .ok_or(ParseError::InvalidAttributeValue {
                         attribute: "RESOLUTION".into(),
                         value: v.to_string(),
-                        expected: "a valid resolution".into(),
+                        expected: "a valid resolution",
                     })
             })
             .transpose()?;
@@ -1009,7 +1002,7 @@ impl TryFrom<AttributeList> for StreamInf {
                     .ok_or(ParseError::InvalidAttributeValue {
                         attribute: "FRAME-RATE".into(),
                         value: v.to_string(),
-                        expected: "a valid frame rate".into(),
+                        expected: "a valid frame rate",
                     })
             })
             .transpose()?;
@@ -1041,7 +1034,7 @@ impl TryFrom<AttributeList> for StreamInf {
                                     .ok_or(ParseError::InvalidAttributeValue {
                                         attribute: "ALLOWED-CPC".into(),
                                         value: v.to_string(),
-                                        expected: "a valid KEYFORMAT attribute value".into(),
+                                        expected: "a valid KEYFORMAT attribute value",
                                     })?
                                     .to_string();
 
@@ -1134,8 +1127,7 @@ impl TryFrom<AttributeList> for StreamInf {
                         attribute: "CLOSED-CAPTIONS".into(),
                         value: v.to_string(),
                         expected:
-                            "either a quoted-string or an enumerated-string with the value NONE."
-                                .into(),
+                            "either a quoted-string or an enumerated-string with the value NONE.",
                     })
                     .map(|x| x.to_string())
             })
@@ -1149,8 +1141,7 @@ impl TryFrom<AttributeList> for StreamInf {
                         attribute: "PATHWAY-ID".into(),
                         value: v.to_string(),
                         expected:
-                            "a valid quoted string representing thr PATHWAY-ID attribute value."
-                                .into(),
+                            "a valid quoted string representing thr PATHWAY-ID attribute value.",
                     })
                     .map(|x| x.to_string())
             })
@@ -1187,7 +1178,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
             .ok_or(ParseError::InvalidAttributeValue {
                 attribute: "BANDWIDTH".into(),
                 value: "NONE".into(),
-                expected: "a valid bandwidth".into(),
+                expected: "a valid bandwidth",
             })?
             .as_decimal_integer()
             .ok_or(ParseError::ExpectedDecimalInteger {
@@ -1210,15 +1201,15 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                 v.as_decimal_floating_point()
                     .and_then(|x| {
                         if x > 0.0 {
-                            return Some(x);
+                            Some(x)
                         } else {
-                            return None;
+                            None
                         }
                     })
                     .ok_or(ParseError::InvalidAttributeValue {
                         attribute: "SCORE".into(),
                         value: v.to_string(),
-                        expected: "a positive decimal-floating-point score".into(),
+                        expected: "a positive decimal-floating-point score",
                     })
             })
             .transpose()?;
@@ -1229,7 +1220,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|x| {
-                        let mut codec = parse_codecs_attr(x);
+                        let codec = parse_codecs_attr(x);
 
                         match codec {
                             Ok(c) => Ok(c),
@@ -1257,7 +1248,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                     .ok_or(ParseError::InvalidAttributeValue {
                         attribute: "RESOLUTION".into(),
                         value: v.to_string(),
-                        expected: "a valid resolution".into(),
+                        expected: "a valid resolution",
                     })
             })
             .transpose()?;
@@ -1289,7 +1280,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                                     .ok_or(ParseError::InvalidAttributeValue {
                                         attribute: "ALLOWED-CPC".into(),
                                         value: v.to_string(),
-                                        expected: "a valid KEYFORMAT attribute value".into(),
+                                        expected: "a valid KEYFORMAT attribute value",
                                     })?
                                     .to_string();
 
@@ -1298,7 +1289,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                                     .ok_or(ParseError::InvalidAttributeValue {
                                         attribute: "ALLOWED-CPC".into(),
                                         value: v.to_string(),
-                                        expected: "a valid label".into(),
+                                        expected: "a valid label",
                                     })?
                                     .split('/')
                                     .map(|s| s.to_string())
@@ -1363,8 +1354,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                         attribute: "PATHWAY-ID".into(),
                         value: v.to_string(),
                         expected:
-                            "a valid quoted string representing thr PATHWAY-ID attribute value."
-                                .into(),
+                            "a valid quoted string representing thr PATHWAY-ID attribute value.",
                     })
                     .map(|x| x.to_string())
             })
@@ -1401,12 +1391,6 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
     }
 }
 
-impl Default for VideoRange {
-    fn default() -> Self {
-        Self::Sdr
-    }
-}
-
 impl FromStr for VideoRange {
     type Err = ParseError;
 
@@ -1418,7 +1402,7 @@ impl FromStr for VideoRange {
             _ => Err(ParseError::InvalidAttributeValue {
                 attribute: "VIDEO-RANGE".into(),
                 value: s.to_string(),
-                expected: "a valid video range".into(),
+                expected: "a valid video range",
             }),
         }
     }
@@ -1466,7 +1450,7 @@ impl FromStr for HdcpLevel {
             _ => Err(ParseError::InvalidAttributeValue {
                 attribute: "HDCP-LEVEL".into(),
                 value: s.to_string(),
-                expected: "a valid HDCP level".into(),
+                expected: "a valid HDCP level",
             }),
         }
     }
@@ -1568,12 +1552,6 @@ impl TryFrom<AttributeList> for SessionData {
             data_type,
         })
 
-    }
-}
-
-impl Default for SessionDataFormat {
-    fn default() -> Self {
-        Self::Json
     }
 }
 

@@ -36,7 +36,7 @@ pub enum MediaMetadata {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Skip {
     skipped_segments: u64,
-    recently_removed_dateranges: Vec<String>,
+    pub(crate) recently_removed_dateranges: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -551,6 +551,15 @@ impl fmt::Display for PlayListVariableDefinition {
             PlayListVariableDefinition::QueryParam { name, value: _ } => {
                 write!(f, r#"QUERYPARAM="{}""#, name)
             }
+        }
+    }
+}
+
+impl MediaMetadata {
+    pub(crate) fn as_skip(&self) -> Option<&Skip> {
+        match self {
+            MediaMetadata::Skip(skip) => Some(skip),
+            _ => None,
         }
     }
 }
