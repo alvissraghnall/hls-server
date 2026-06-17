@@ -1433,7 +1433,7 @@ impl FromStr for PresentationEntrySpecifier {
             _ => Err(ParseError::InvalidAttributeValue {
                 attribute: "REQ-VIDEO-LAYOUT".into(),
                 value: s.to_string(),
-                expected: "a valid presentation entry".into(),
+                expected: "a valid presentation entry",
             }),
         }
     }
@@ -1567,6 +1567,12 @@ impl FromStr for SessionDataFormat {
                 expected: &["JSON", "RAW"],
             }),
         }
+    }
+}
+
+impl IFrameStreamInf {
+    pub fn get_req_video_layout (&self) -> Option<&Vec<ViewPresentationEntry>> {
+        self.req_video_layout.as_ref()
     }
 }
 

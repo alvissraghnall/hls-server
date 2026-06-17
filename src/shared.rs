@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
 use crate::{
     CRLF,
@@ -90,19 +90,20 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
     }
 }
 
-impl ToString for SharedTag {
-    fn to_string(&self) -> String {
+impl Display for SharedTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SharedTag::Version(v) => format!("#EXT-X-VERSION:{}", v),
-            SharedTag::IndependentSegments => format!("#EXT-X-INDEPENDENT-SEGMENTS"),
+            SharedTag::Version(v) => write!(f, "#EXT-X-VERSION:{}", v),
+            SharedTag::IndependentSegments => write!(f, "#EXT-X-INDEPENDENT-SEGMENTS"),
             SharedTag::Start {
                 precise,
                 time_offset,
-            } => format!(
+            } => write!(
+                f,
                 "#EXT-X-START:PRECISE={},TIME-OFFSET={}",
                 precise, time_offset
             ),
-            SharedTag::Variable(var) => format!("#EXT-X-DEFINE:{}", var),
+            SharedTag::Variable(var) => write!(f, "#EXT-X-DEFINE:{}", var),
         }
     }
 }

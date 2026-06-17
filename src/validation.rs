@@ -1,9 +1,9 @@
 use crate::{
     error::ValidationError,
-    media::{MediaExclusiveTag, MediaTag},
-    multivariant::{InStreamId::{self, Service}, Media, MultivariantExclusiveTag, MultivariantTag},
+    media::MediaExclusiveTag,
+    multivariant::MultivariantExclusiveTag::{self, IFrameStreamInf},
     parser::Playlist,
-    playlist::SharedTag,
+    playlist::{PlayListVariableDefinition, SharedTag},
     segment::{DurationValue, Method},
     shared::Tag,
 };
@@ -25,12 +25,18 @@ impl Tag for Playlist {
             .version()
             .ok_or_else(|| ValidationError::MissingRequiredTag("#EXT-X-VERSION".into()))?;
 
-        // 
+        //
         // A Playlist MUST indicate an EXT-X-VERSION of 11 or higher if it
         // contains:
-     
-        // *  An EXT-X-DEFINE tag with a QUERYPARAM attribute.
-        
+
+        // version of playlist with an EXT-X-DEFINE tag with a QUERYPARAM attribute must be 11 or higher.
+        require_version!(
+            version,
+            self.get_shared_tags().iter().any(|t| matches!(t, SharedTag::Variable(PlayListVariableDefinition::QueryParam { name: _, value: _ }))),
+            11,
+            "A Playlist MUST indicate an EXT-X-VERSION of 11 or higher if it \
+               contains an EXT-X-DEFINE tag with QUERYPARAM attribute"
+        );
 
         match self {
             //  Note that in protocol version 6, the semantics of the EXT-
@@ -129,7 +135,7 @@ impl Tag for Playlist {
                         "A Playlist MUST indicate an EXT-X-VERSION of 9 or higher if it \
                          contains the EXT-X-SKIP tag."
                     );
-                
+
                     require_version!(
                         version,
                         !skip.recently_removed_dateranges.is_empty(),
@@ -152,6 +158,27 @@ impl Tag for Playlist {
                              tag."
                         );
 
+                        require_version!(
+                            version,
+                            media.get_instream_id().map(|iid| !iid.is_cc()).unwrap_or(false),
+                            13,
+                            "A Multivariant Playlist MUST indicate an EXT-X-VERSION of 13 or higher if it \
+                             contains an EXT-X-MEDIA tag with INSTREAM-ID attribute for non CLOSED-CAPTIONS \
+                             TYPE."
+                        );
+
+                        Ok(())
+                    }
+                    // should acc be until an attribute whose name starts with "REQ-".
+                    MultivariantExclusiveTag::IFrameStreamInf(i) => {
+                        require_version!(
+                            version,
+                            i.get_req_video_layout().is_some(),
+                            12,
+                            "A Multivariant Playlist MUST indicate an EXT-X-VERSION of 12 or higher if it \
+                             contains a 'REQUIRED-VIDEO-LAYOUT' attribute of the EXT-X-IFRAME-STREAM-INF \
+                             tag."
+                        );
                         Ok(())
                     }
                     _ => Ok(()),
@@ -170,10 +197,9 @@ impl Tag for Playlist {
 
                         Ok(())
                     }
-                    
+
                     _ => Ok(()),
                 })?;
-                
             }
         }
 
@@ -192,6 +218,13 @@ impl Playlist {
                 SharedTag::Version(v) => Some(v),
                 _ => None,
             }),
+        }
+    }
+
+    fn get_shared_tags(&self) -> &[SharedTag] {
+        match self {
+            Playlist::Media(p) => &p.shared_tags,
+            Playlist::Multivariant(p) => &p.shared_tags,
         }
     }
 }

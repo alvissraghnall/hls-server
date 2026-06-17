@@ -1,12 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet},
-    str::FromStr,
+    collections::{HashMap, HashSet}, fmt::Display, str::FromStr
 };
 
 use crate::{error::ParseError, playlist::PlayListVariableDefinition};
 
-/**
-*
+#[doc = r#"
   An AttributeValue is one of the following:
 
   *  decimal-integer: an unquoted string of characters from the set
@@ -49,8 +47,7 @@ use crate::{error::ParseError, playlist::PlayListVariableDefinition};
 
    *  decimal-resolution: two decimal-integers separated by the "x"
       character.  The first integer is a horizontal pixel dimension
-      (width); the second is a vertical pixel dimension (height).
- */
+      (width); the second is a vertical pixel dimension (height)."#]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum AttributeValue {
     DecimalInteger(u64),
@@ -67,19 +64,19 @@ pub(crate) enum AttributeValue {
 // The actual data structure
 pub type AttributeList = HashMap<String, AttributeValue>;
 
-impl ToString for AttributeValue {
-    fn to_string(&self) -> String {
+impl Display for AttributeValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SignedDecimalFloatingPoint(x) => x.to_string(),
-            Self::DecimalInteger(x) => x.to_string(),
-            Self::DecimalFloatingPoint(x) => x.to_string(),
-            Self::HexSequence(x) => format!("0x{}", hex::encode(x)),
-            Self::QuotedString(x) => x.to_string(),
-            Self::EnumeratedString(x) => x.to_string(),
+            Self::SignedDecimalFloatingPoint(x) => write!(f, "{}", x),
+            Self::DecimalInteger(x) => write!(f, "{}", x),
+            Self::DecimalFloatingPoint(x) => write!(f, "{}", x),
+            Self::HexSequence(x) => write!(f, "0x{}", hex::encode(x)),
+            Self::QuotedString(x) => write!(f, "{}", x),
+            Self::EnumeratedString(x) => write!(f, "{}", x),
             // hmmmmmmmmmm [ `clone` ]
-            Self::EnumeratedStringList(x) => x.iter().cloned().collect::<Vec<String>>().join(","),
-            Self::DecimalResolution { width, height } => format!("{}x{}", width, height),
-            Self::XAttribute(name, value) => format!("{}={}", name, value.to_string()),
+            Self::EnumeratedStringList(x) => write!(f, "{}", x.iter().cloned().collect::<Vec<String>>().join(",")),
+            Self::DecimalResolution { width, height } => write!(f, "{}x{}", width, height),
+            Self::XAttribute(name, value) => write!(f, "{}={}", name, value),
         }
     }
 }
@@ -162,7 +159,7 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "NAME".into(),
                     value: parsed,
-                    expected: "a valid NAME according to HLS spec".into(),
+                    expected: "a valid NAME according to HLS spec",
                 });
             }
             Ok(AttributeValue::QuotedString(parsed))
@@ -174,7 +171,7 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "VALUE".into(),
                     value: parsed,
-                    expected: "a valid VALUE according to HLS spec".into(),
+                    expected: "a valid VALUE according to HLS spec",
                 });
             }
 
@@ -187,7 +184,7 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "IMPORT".into(),
                     value: parsed,
-                    expected: "a valid IMPORT according to HLS spec".into(),
+                    expected: "a valid IMPORT according to HLS spec",
                 });
             }
             Ok(AttributeValue::QuotedString(parsed))
@@ -199,7 +196,7 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "QUERYPARAM".into(),
                     value: parsed,
-                    expected: "a valid QUERYPARAM according to HLS spec".into(),
+                    expected: "a valid QUERYPARAM according to HLS spec",
                 });
             }
             Ok(AttributeValue::QuotedString(parsed))
@@ -257,9 +254,9 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
 
         x if x.starts_with("X-") => {
             let parsed = parse_quoted_string(value).map_or_else(
-                |e| {
+                |_| {
                     parse_hex_sequence(value)
-                        .map(|bytes| AttributeValue::HexSequence(bytes))
+                        .map(AttributeValue::HexSequence)
                         .or_else(|_| {
                             value
                                 .parse::<f64>()
@@ -329,7 +326,7 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "ALLOWED-CPC".into(),
                     value: parsed,
-                    expected: "a valid CPC label according to HLS spec".into(),
+                    expected: "a valid CPC label according to HLS spec",
                 });
             }
             Ok(AttributeValue::QuotedString(parsed))
@@ -342,7 +339,7 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "STABLE-VARIANT-ID".into(),
                     value: parsed,
-                    expected: "a valid STABLE-VARIANT-ID according to HLS spec".into(),
+                    expected: "a valid STABLE-VARIANT-ID according to HLS spec",
                 });
             }
             Ok(AttributeValue::QuotedString(parsed))
@@ -379,8 +376,7 @@ pub(crate) fn parse_attribute_list(s: &str) -> Result<AttributeList, ParseError>
         .split(',')
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .map(|s| s.split_once('='))
-        .flatten()
+        .filter_map(|s| s.split_once('='))
     {
         let key = key.trim();
         let value = value.trim();

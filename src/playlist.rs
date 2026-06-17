@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fmt, str::FromStr};
+use std::{
+    collections::HashMap,
+    fmt::{self, Display, write},
+    str::FromStr,
+};
 
 use chrono::{Date, DateTime, FixedOffset};
 
@@ -380,7 +384,7 @@ impl FromStr for Cue {
             _ => Err(ParseError::InvalidAttributeValue {
                 attribute: "CUE".into(),
                 value: s.into(),
-                expected: "an enumerated string with value PRE, POST, or ONCE".into(),
+                expected: "an enumerated string with value PRE, POST, or ONCE",
             }),
         }
     }
@@ -560,6 +564,136 @@ impl MediaMetadata {
         match self {
             MediaMetadata::Skip(skip) => Some(skip),
             _ => None,
+        }
+    }
+}
+
+impl fmt::Display for Skip {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "#EXT-X-SKIP:SKIPPED-SEGMENTS={}", self.skipped_segments);
+        write!(f, ",RECENTLY-REMOVED-DATERANGES=\"")?;
+
+        for (i, daterange_id) in self.recently_removed_dateranges.iter().enumerate() {
+            if i > 0 {
+                write!(f, "\t")?;
+            }
+            write!(f, "{daterange_id}")?;
+        }
+
+        write!(f, "\"")?;
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for Cue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Cue::Pre => write!(f, "PRE")?,
+            Cue::Post => write!(f, "POST")?,
+            Cue::Once => write!(f, "ONCE")?,
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for DateRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let DateRange {
+            id,
+            class,
+            start_date,
+            cue,
+            end_date,
+            duration,
+            planned_duration,
+            end_on_next,
+            extensions,
+        } = self;
+
+        write!(f, "#EXT-X-DATERANGE:ID={}", id)?;
+        if let Some(class) = class {
+            write!(f, ",CLASS=\"{class}\"")?;
+        }
+        if let Some(start) = start_date {
+            write!(f, ",START-DATE=\"{start}\"")?;
+        }
+
+        write!(f, ",CUE=\"")?;
+
+        for (i, trigger_id) in cue.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{trigger_id}")?;
+        }
+
+        write!(f, "\"")?;
+        if let Some(end) = end_date {
+            write!(f, ",END-DATE=\"{end}\"")?;
+        }
+        if let Some(duration) = duration {
+            write!(f, ",DURATION={duration}")?;
+        }
+        if let Some(planned_duration) = planned_duration {
+            write!(f, ",PLANNED-DURATION={planned_duration}")?;
+        }
+        if let Some(end_on_next) = end_on_next {
+            if *end_on_next {
+                write!(f, ",END-ON-NEXT=YES")?;
+            }
+        }
+        for (key, value) in extensions.iter() {
+            write!(f, ",{key}=\"{value}\"")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for PreloadHintType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PreloadHintType::Map => write!(f, "MAP"),
+            PreloadHintType::Part => write!(f, "PART"),
+        }
+    }
+}
+
+impl fmt::Display for PreloadHint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#EXT-X-PRELOAD-HINT:TYPE={}", self.hint_type)?;
+        write!(f, ",URI=\"{}\"", self.uri)?;
+        write!(f, ",BYTERANGE-START={}", self.byterange_start)?;
+        if let Some(byterange_len) = &self.byterange_length {
+            write!(f, ",BYTERANGE-LENGTH={byterange_len}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for RenditionReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#EXT-X-RENDITION-REPORT:")?;
+        write!(f, "URI=\"{}\"", self.uri)?;
+        write!(f, ",LAST-MSN={}", self.last_msn)?;
+        if let Some(last_part) = &self.last_part {
+            write!(f, ",LAST-PART={last_part}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for MediaMetadata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MediaMetadata::Skip(skip) => write!(f, "{}", skip),
+            MediaMetadata::Daterange(daterange) => write!(f, "{}", daterange),
+            MediaMetadata::PreloadHint(preload_hint) => write!(f, "{}", preload_hint),
+            MediaMetadata::RenditionReport(rendition_report) => write!(f, "{}", rendition_report),
         }
     }
 }

@@ -1,15 +1,15 @@
+use std::fmt::Display;
+
 use itertools::Itertools;
 
 use crate::{
-    error::{self, ParseError, ValidationError},
-    media::{self, MediaExclusiveTag, MediaPlaylist, MediaTag, parse_media_exclusive_tag},
+    error::{self, ParseError},
+    media::{MediaExclusiveTag, MediaPlaylist},
     multivariant::{MultivariantExclusiveTag, MultivariantPlaylist},
-    parser::PlaylistKind::Media,
     playlist::{MediaMetadata, SharedTag},
     push_line::PushLine,
     read_write,
     segment::{MediaSegment, ParseSegmentState},
-    shared::parse_shared_tag,
 };
 
 static EXTINF: &'static str = "#EXTINF";
@@ -50,12 +50,6 @@ enum ParsedLine {
     MultivariantTag(MultivariantExclusiveTag),
 
     MediaMetadata(MediaMetadata),
-}
-
-enum ParsedTag {
-    Shared(SharedTag),
-    Media(MediaExclusiveTag),
-    Multivariant(MultivariantExclusiveTag),
 }
 
 pub enum Playlist {
@@ -375,6 +369,8 @@ impl PlaylistParser {
     }
 }
 
+type AsMediaFn = fn(&Playlist) -> Option<&MediaPlaylist>;
+
 impl Playlist {
     pub(crate) const EXTM3U: &'static str = "#EXTM3U";
 
@@ -395,17 +391,24 @@ impl Playlist {
     }
 }
 
-impl ToString for Playlist {
-    fn to_string(&self) -> String {
+impl Display for Playlist {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut playlist_str = String::new();
         playlist_str.push_line(Self::EXTM3U);
 
         match self {
-            Playlist::Media(media_playlist) => {}
-            Playlist::Multivariant(multivariant_playlist) => {}
+            Playlist::Media(_media_playlist) => {
+                // remember that the whole of the media playlist is not just one line
+                // so this would need to be rewritten for each individual line
+                // for line in _media_playlist {
+                //     playlist_str.push_line(line.to_string());
+                // }
+            }
+            Playlist::Multivariant(_multivariant_playlist) => {
+                // playlist_str.push_line(multivariant_playlist.to_string());
+            }
         }
-
-        playlist_str
+        write!(f, "{}", playlist_str)
     }
 }
 
@@ -432,7 +435,10 @@ mod tests {
             Ok(p) => {
                 assert!(matches!(p, Playlist::Media(_)));
 
-                p.as_media().map(|media| {
+                let media = p.as_media();
+                assert!(media.is_some());
+
+                if let Some(media) = media {
                     println!("{}", media.segments.len());
                     assert!(media.shared_tags.contains(&SharedTag::Version(3)));
                     assert!(
@@ -448,83 +454,76 @@ mod tests {
                         media.exclusive_tags.last(),
                         Some(&MediaExclusiveTag::EndList)
                     );
-                });
+                };
             }
             Err(e) => panic!("Failed due to: {:?}", e),
         }
+    }
 
-        #[test]
-        fn media_with_tags() {
-            let playlist_file = Path::new(ROOT)
-                .join("examples")
-                .join("02-media-with-tags.m3u8");
-    
-            let playlist = parse_file_into_playlist(playlist_file);
-    
-            match playlist {
-                Ok(p) => {
-                    assert!(matches!(p, Playlist::Media(_)));
-    
-                    p.as_media().map(|media| {
-                        println!("{}", media.segments.len());
-                        assert!(
-                            media.shared_tags.contains(&SharedTag::Version(7))
-                        );
-                        assert!(
-                            media
-                                .shared_tags
-                                .contains(&SharedTag::IndependentSegments)
-                        );
-                        assert!(media.shared_tags.contains(&SharedTag::Start {
-                            time_offset: 0.0,
-                            precise: true
-                        }));
-                        assert!(
-                            media
-                                .exclusive_tags
-                                .contains(&MediaExclusiveTag::TargetDuration(8))
-                        );
-                        assert!(
-                            media
-                                .exclusive_tags
-                                .contains(&MediaExclusiveTag::MediaSequence(42))
-                        );
-                        assert!(
-                            media
-                                .exclusive_tags
-                                .contains(&MediaExclusiveTag::PlaylistType(PlayListType::Vod))
-                        );
-                        assert!(
-                            media
-                                .exclusive_tags
-                                .contains(&MediaExclusiveTag::EndList)
-                        );
-                        let iter = media.segments.iter();
-    
-                        for (i, seg) in iter.enumerate() {
-                            println!("{:?}", seg);
-                            assert_eq!(*seg.get_duration(), 8.000);
-                            assert_eq!(
-                                seg.get_uri(),
-                                &<&str as Into<Uri>>::into(
-                                    format!("segment-000{}.ts", i + 1).as_str().into()
-                                )
-                            );
-                            if i == 0 {
-                                assert_eq!(seg.get_title(), Some("Episode intro".into()));
-                            } else {
-                                assert_eq!(seg.get_title(), Some(format!("Episode segment {}", i + 1)));
-                            }
-                        }
-    
+    #[test]
+    fn media_with_tags() {
+        let playlist_file = Path::new(ROOT)
+            .join("examples")
+            .join("02-media-with-tags.m3u8");
+
+        let playlist = parse_file_into_playlist(playlist_file);
+
+        match playlist {
+            Ok(p) => {
+                assert!(matches!(p, Playlist::Media(_)));
+
+                let media = p.as_media();
+                assert!(media.is_some());
+
+                if let Some(media) = media {
+                    println!("{}", media.segments.len());
+                    assert!(media.shared_tags.contains(&SharedTag::Version(7)));
+                    assert!(media.shared_tags.contains(&SharedTag::IndependentSegments));
+                    assert!(media.shared_tags.contains(&SharedTag::Start {
+                        time_offset: 0.0,
+                        precise: true
+                    }));
+                    assert!(
+                        media
+                            .exclusive_tags
+                            .contains(&MediaExclusiveTag::TargetDuration(8))
+                    );
+                    assert!(
+                        media
+                            .exclusive_tags
+                            .contains(&MediaExclusiveTag::MediaSequence(42))
+                    );
+                    assert!(
+                        media
+                            .exclusive_tags
+                            .contains(&MediaExclusiveTag::PlaylistType(PlayListType::Vod))
+                    );
+                    assert!(media.exclusive_tags.contains(&MediaExclusiveTag::EndList));
+                    let iter = media.segments.iter();
+
+                    for (i, seg) in iter.enumerate() {
+                        println!("{:?}", seg);
+                        assert_eq!(*seg.get_duration(), 8.000);
                         assert_eq!(
-                            media.exclusive_tags.last(),
-                            Some(&MediaExclusiveTag::EndList)
+                            seg.get_uri(),
+                            &<&str as Into<Uri>>::into(
+                                format! {"segment-000{}.ts", i + 1}.as_str()
+                            )
                         );
-                    });
+                        if i == 0 {
+                            assert_eq!(seg.get_title(), Some("Episode intro".into()));
+                        } else {
+                            assert_eq!(seg.get_title(), Some(format!("Episode segment {}", i + 1)));
+                        }
+                    }
+
+                    assert_eq!(
+                        media.exclusive_tags.last(),
+                        Some(&MediaExclusiveTag::EndList)
+                    );
                 }
-                Err(e) => panic!("Failed due to: {:?}", e),
             }
+            Err(e) => panic!("Failed due to: {:?}", e),
         }
     }
 }

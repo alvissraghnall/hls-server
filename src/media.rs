@@ -472,27 +472,27 @@ impl TryFrom<AttributeList> for ServerControl {
 
 impl Display for MediaPlaylist {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // hmm now i think of it: tags vs segments -- are their original
-        // order to be preserved ? can i interchange them ?? hmmmmmmmmmm///
-        //
-        unimplemented!()
+        for tag in &self.shared_tags {
+            writeln!(f, "{}", tag).ok();
+        }
+        for segment in &self.segments {
+            writeln!(f, "{}", segment).ok();
+        }
+        for tag in &self.exclusive_tags {
+            writeln!(f, "{}", tag).ok();
+        }
+        for md in &self.media_metadata {
+            writeln!(f, "{}", md).ok();
+        }
+        Ok(())
     }
 }
 
 impl Display for MediaTag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MediaTag::Shared(shared_tag) => unimplemented!(),
-            MediaTag::Exclusive(media_exclusive_tag) => media_exclusive_tag.fmt(f),
-        }
-    }
-}
-
-impl MediaTag {
-    fn shared(&self) -> Option<&SharedTag> {
-        match self {
-            MediaTag::Shared(tag) => Some(tag),
-            _ => None,
+            MediaTag::Shared(shared_tag) => write!(f, "{}", shared_tag),
+            MediaTag::Exclusive(media_exclusive_tag) => write!(f, "{}", media_exclusive_tag),
         }
     }
 }

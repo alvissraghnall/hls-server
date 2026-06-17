@@ -1,10 +1,11 @@
-use std::str::FromStr;
+use std::{fmt::Display, ops::Deref, str::FromStr};
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone as _};
 
 use crate::{
     attribute_list::{AttributeList, parse_attribute_list},
     error::ParseError,
+    segment::DurationValue::Int,
     uri::Uri,
 };
 
@@ -535,15 +536,6 @@ impl FromStr for DurationValue {
     }
 }
 
-impl ToString for DurationValue {
-    fn to_string(&self) -> String {
-        match self {
-            DurationValue::Int(i) => i.to_string(),
-            DurationValue::Float(f) => f.to_string(),
-        }
-    }
-}
-
 impl PartialEq<f32> for DurationValue {
     fn eq(&self, other: &f32) -> bool {
         match self {
@@ -608,5 +600,150 @@ impl TryFrom<PendingSegment> for MediaSegment {
             bitrate: value.bitrate,
             part: value.part,
         })
+    }
+}
+
+impl Display for DurationValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DurationValue::Int(i) => write!(f, "#EXTINF:{}", i),
+            DurationValue::Float(fl) => write!(f, "#EXTINF:{}", fl),
+        }
+    }
+}
+
+impl Display for ByteRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // #EXT-X-BYTERANGE:<n>[@<o>]
+        write!(f, "#EXT-X-BYTERANGE:{}", self.len)?;
+        if let Some(offset) = self.offset {
+            write!(f, "@{}", offset)?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for Method {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Method::Aes128 => write!(f, "AES-128"),
+            Method::None => write!(f, "NONE"),
+            Method::SampleAes => write!(f, "SAMPLE-AES"),
+            Method::SampleAesCtr => write!(f, "SAMPLE-AES-CTR"),
+            Method::Aes256Gcm => write!(f, "AES-256-GCM"),
+        }
+    }
+}
+
+impl Display for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#EXT-X-KEY:METHOD={}", self.method)?;
+        write!(f, ",URI=\"{}\"", self.uri)?;
+        if let Some(iv) = &self.iv {
+            write!(f, ",IV=0x{}", hex::encode(iv))?;
+        }
+        if let Some(key_format) = &self.key_format {
+            write!(f, ",KEYFORMAT=\"{}\"", key_format)?;
+        }
+        for (i, version) in self.key_format_versions.iter().enumerate() {
+            if i > 0 {
+                write!(f, "/")?;
+            }
+            write!(f, "{version}")?;
+        }
+
+        write!(f, "\"")?;
+
+        Ok(())
+    }
+}
+
+impl Display for Map {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#EXT-X-MAP:URI=\"{}\"", self.uri)?;
+        if let Some(byte_range) = &self.byte_range {
+            write!(f, ",BYTERANGE=\"{}\"", byte_range)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for PartialSegment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#EXT-X-PART:URI=\"{}\"", self.uri)?;
+        write!(f, ",DURATION={}", self.duration)?;
+        if let Some(independent) = self.independent {
+            if independent {
+                write!(f, ",INDEPENDENT=YES")?;
+            } else {
+                write!(f, ",INDEPENDENT=NO")?;
+            }
+        }
+        if let Some(byte_range) = &self.byte_range {
+            write!(f, ",BYTERANGE=\"{}\"", byte_range)?;
+        }
+        if self.gap {
+            write!(f, ",GAP=\"YES\"")?;
+        }
+        writeln!(f)?;
+        Ok(())
+    }
+}
+
+impl Display for MediaSegment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let MediaSegment {
+            uri,
+            duration,
+            title,
+            byte_range,
+            discontinuity,
+            key,
+            map,
+            program_date_time,
+            bitrate,
+            gap,
+            part,
+            media_sequence: _,
+        } = self;
+
+        write!(f, "{}", duration)?;
+        if let Some(title) = title {
+            write!(f, ",{}", title)?;
+        }
+        writeln!(f)?;
+
+        if let Some(byte_range) = byte_range {
+            writeln!(f, "{}", byte_range)?;
+        }
+
+        if *discontinuity {
+            writeln!(f, "#EXT-X-DISCONTINUITY")?;
+        }
+
+        if let Some(key) = key {
+            writeln!(f, "{}", key)?;
+        }
+
+        if let Some(map) = map {
+            writeln!(f, "{}", map)?;
+        }
+        if let Some(program_date_time) = program_date_time {
+            writeln!(f, "#EXT-X-PROGRAM-DATE-TIME:{}", program_date_time)?;
+        }
+        if *gap {
+            writeln!(f, "#EXT-X-GAP")?;
+        }
+        if let Some(bitrate) = bitrate {
+            writeln!(f, "#EXT-X-BITRATE:{}", bitrate)?;
+        }
+        if let Some(part) = part {
+            writeln!(f, "{}", part)?;
+        }
+
+        writeln!(f, "{}", uri)?;
+
+        Ok(())
     }
 }
