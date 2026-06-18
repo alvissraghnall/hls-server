@@ -393,22 +393,15 @@ impl Playlist {
 
 impl Display for Playlist {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut playlist_str = String::new();
-        playlist_str.push_line(Self::EXTM3U);
-
+        writeln!(f, "{}", Self::EXTM3U)?;
         match self {
-            Playlist::Media(_media_playlist) => {
-                // remember that the whole of the media playlist is not just one line
-                // so this would need to be rewritten for each individual line
-                // for line in _media_playlist {
-                //     playlist_str.push_line(line.to_string());
-                // }
+            Playlist::Media(media_playlist) => {
+                writeln!(f, "{}", media_playlist)
             }
-            Playlist::Multivariant(_multivariant_playlist) => {
-                // playlist_str.push_line(multivariant_playlist.to_string());
+            Playlist::Multivariant(multivariant_playlist) => {
+                writeln!(f, "{}", multivariant_playlist)
             }
         }
-        write!(f, "{}", playlist_str)
     }
 }
 

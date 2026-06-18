@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{default, str::FromStr};
+use std::{default, fmt::Display, str::FromStr};
 
 use crate::{
     attribute_list::{
@@ -21,8 +21,7 @@ pub(crate) struct SessionData {
     language: Option<String>,
 }
 
-#[derive(Debug, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, PartialEq, Default)]
 enum SessionDataFormat {
     Raw,
     #[default]
@@ -124,8 +123,7 @@ pub(crate) struct AllowedCpcEntry {
     labels: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) enum VideoRange {
     #[default]
     Sdr,
@@ -146,7 +144,7 @@ pub(crate) struct Media {
     uri: Option<Uri>,
     group_id: String,
     language: Option<String>,
-    name: Option<String>,
+    name: String,
     assoc_language: Option<String>,
     stable_rendition_id: Option<String>,
     default: bool,
@@ -368,12 +366,11 @@ impl MultivariantPlaylist {
                 precise: _,
                 time_offset: _,
             } => {
-                if self.shared_tags.iter().any(|t| {
-                    matches!(
-                        t,
-                        SharedTag::Start { precise: _, .. }
-                    )
-                }) {
+                if self
+                    .shared_tags
+                    .iter()
+                    .any(|t| matches!(t, SharedTag::Start { precise: _, .. }))
+                {
                     return Err(ParseError::DuplicateTag(String::from(
                         "EXT-X-START:PRECISE",
                     )));
@@ -385,7 +382,10 @@ impl MultivariantPlaylist {
         Ok(())
     }
 
-    pub(crate) fn apply_exclusive_tag(&mut self, tag: MultivariantExclusiveTag) -> Result<(), ParseError> {
+    pub(crate) fn apply_exclusive_tag(
+        &mut self,
+        tag: MultivariantExclusiveTag,
+    ) -> Result<(), ParseError> {
         self.exclusive_tags.push(tag);
         Ok(())
     }
@@ -433,9 +433,14 @@ impl MultivariantPlaylist {
 
                         let var_def = self.variables.iter_mut()
                             .find(|v| matches!(v, PlayListVariableDefinition::QueryParam { name: nom, value: _ } if var == Some(nom)));
-                            
-                        if let Some(v) = var_def && let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v {
-                            *v = PlayListVariableDefinition::QueryParam { name: name.to_string(), value: value.to_string() };
+
+                        if let Some(v) = var_def
+                            && let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v
+                        {
+                            *v = PlayListVariableDefinition::QueryParam {
+                                name: name.to_string(),
+                                value: value.to_string(),
+                            };
                         }
                     }
                 }
@@ -448,7 +453,7 @@ impl MultivariantPlaylist {
 
 impl FromStr for MultivariantExclusiveTag {
     type Err = ParseError;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         parse_multivariant_exclusive_tag(s)
     }
@@ -536,10 +541,9 @@ pub(crate) fn parse_multivariant_exclusive_tag(
                         .map(|x| x.to_string())
                 })
                 .transpose()?;
-            
+
             Ok(MultivariantExclusiveTag::ContentSteering((uri, pathway_id)))
         }
-
 
         _ => Err(ParseError::InvalidLine(line.to_string())),
     }
@@ -554,7 +558,7 @@ impl TryFrom<AttributeList> for Media {
             .ok_or(ParseError::InvalidAttributeValue {
                 attribute: "TYPE".into(),
                 value: "NONE".into(),
-                expected: "an enumerated string".into(),
+                expected: "an enumerated string",
             })?;
 
         let media_type: MediaType = attr
@@ -579,7 +583,7 @@ impl TryFrom<AttributeList> for Media {
             .ok_or(ParseError::InvalidAttributeValue {
                 attribute: "GROUP-ID".into(),
                 value: "NONE".into(),
-                expected: "a valid group ID".into(),
+                expected: "a valid group ID",
             })?
             .as_quoted_string()
             .ok_or(ParseError::ExpectedQuotedString)?
@@ -605,12 +609,12 @@ impl TryFrom<AttributeList> for Media {
 
         let name = map
             .remove("NAME")
-            .map(|v| {
-                v.as_quoted_string()
-                    .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
-            })
-            .transpose()?;
+            .ok_or(ParseError::MissingAttribute {
+                attribute: "NAME".into(),
+            })?
+            .as_quoted_string()
+            .ok_or(ParseError::ExpectedQuotedString)?
+            .to_string();
 
         let stable_rendition_id = map
             .remove("STABLE-RENDITION-ID")
@@ -752,7 +756,6 @@ impl TryFrom<AttributeList> for Media {
                     .ok_or(ParseError::ExpectedDecimalInteger {
                         found: v.to_string(),
                     })
-                    
             })
             .transpose()?;
 
@@ -941,13 +944,7 @@ impl TryFrom<AttributeList> for StreamInf {
             .remove("SCORE")
             .map(|v| {
                 v.as_decimal_floating_point()
-                    .and_then(|x| {
-                        if x > 0.0 {
-                            Some(x)
-                        } else {
-                            None
-                        }
-                    })
+                    .and_then(|x| if x > 0.0 { Some(x) } else { None })
                     .ok_or(ParseError::InvalidAttributeValue {
                         attribute: "SCORE".into(),
                         value: v.to_string(),
@@ -1199,13 +1196,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
             .remove("SCORE")
             .map(|v| {
                 v.as_decimal_floating_point()
-                    .and_then(|x| {
-                        if x > 0.0 {
-                            Some(x)
-                        } else {
-                            None
-                        }
-                    })
+                    .and_then(|x| if x > 0.0 { Some(x) } else { None })
                     .ok_or(ParseError::InvalidAttributeValue {
                         attribute: "SCORE".into(),
                         value: v.to_string(),
@@ -1539,7 +1530,6 @@ impl TryFrom<AttributeList> for SessionData {
                 })?;
             SessionDataType::Value(value)
         } else {
-
             return Err(ParseError::MissingAttribute {
                 attribute: "URI or VALUE".into(),
             });
@@ -1551,7 +1541,6 @@ impl TryFrom<AttributeList> for SessionData {
             language,
             data_type,
         })
-
     }
 }
 
@@ -1571,7 +1560,7 @@ impl FromStr for SessionDataFormat {
 }
 
 impl IFrameStreamInf {
-    pub fn get_req_video_layout (&self) -> Option<&Vec<ViewPresentationEntry>> {
+    pub fn get_req_video_layout(&self) -> Option<&Vec<ViewPresentationEntry>> {
         self.req_video_layout.as_ref()
     }
 }
@@ -1602,6 +1591,195 @@ impl InStreamId {
 
     pub fn is_other(&self) -> bool {
         matches!(self, InStreamId::Other(_))
+    }
+}
+
+impl Display for MediaType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MediaType::Audio => write!(f, "AUDIO"),
+            MediaType::Video => write!(f, "VIDEO"),
+            MediaType::Subtitles => write!(f, "SUBTITLES"),
+            MediaType::ClosedCaptions => write!(f, "CLOSED-CAPTIONS"),
+        }
+    }
+}
+
+impl Display for InStreamId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InStreamId::CC(id) => write!(f, "CC{}", id),
+            InStreamId::Service(id) => write!(f, "SERVICE{}", id),
+            InStreamId::Other(id) => write!(f, "{}", id),
+        }
+    }
+}
+
+impl Display for MediaCharacteristic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MediaCharacteristic::Public(public_media_characteristic) => {
+                match public_media_characteristic {
+                    PublicMediaCharacteristic::AuxiliaryContent => {
+                        write!(f, "public.auxiliary-content")
+                    }
+                    PublicMediaCharacteristic::TranscribesSpokenDialog => {
+                        write!(f, "public.accessibility.transcribes-spoken-dialog")
+                    }
+                    PublicMediaCharacteristic::DescribesMusicAndSound => {
+                        write!(f, "public.accessibility.describes-music-and-sound")
+                    }
+                    PublicMediaCharacteristic::EasyToRead => write!(f, "public.easy-to-read"),
+                    PublicMediaCharacteristic::DescribesVideo => {
+                        write!(f, "public.accessibility.describes-video")
+                    }
+                    PublicMediaCharacteristic::MachineGenerated => {
+                        write!(f, "public.machine-generated")
+                    }
+                }
+            }
+            MediaCharacteristic::Private(x) => write!(f, "{x}"),
+        }
+    }
+}
+
+impl Display for SpecialUsageIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SpecialUsageIdentifier::Binaural => write!(f, "BINAURAL"),
+            SpecialUsageIdentifier::Immersive => write!(f, "IMMERSIVE"),
+            SpecialUsageIdentifier::Downmix => write!(f, "DOWNMIX"),
+            SpecialUsageIdentifier::Bed(int) => write!(f, "BED-{}", int),
+            SpecialUsageIdentifier::Dof(int) => write!(f, "DOF-{}", int),
+            SpecialUsageIdentifier::Unknown(str) => write!(f, "{}", str),
+        }
+    }
+}
+
+impl Display for Channels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The value is a quoted-string that specifies an ordered, slash-
+        //       separated ("/") list of parameters.
+        write!(f, "\"")?;
+        write!(f, "{}", self.count)?;
+        write!(f, "/")?;
+
+        for (i, coding_id) in self.coding_identifiers.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{coding_id}")?;
+        }
+        write!(f, "/")?;
+
+        for (i, sui) in self.special_usage_identifiers.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{sui}")?;
+        }
+        write!(f, "\"")?;
+
+        Ok(())
+    }
+}
+
+impl Display for Media {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#EXT-X-MEDIA:")?;
+        write!(f, "TYPE={}", self.media_type)?;
+        if let Some(uri) = &self.uri {
+            write!(f, ",URI=\"{}\"", uri)?;
+        }
+        write!(f, ",GROUP-ID=\"{}\"", self.group_id)?;
+        if let Some(language) = &self.language {
+            write!(f, ",LANGUAGE=\"{}\"", language)?;
+        }
+        if let Some(assoc_language) = &self.assoc_language {
+            write!(f, ",ASSOC-LANGUAGE=\"{}\"", assoc_language)?;
+        }
+        write!(f, ",NAME=\"{}\"", self.name)?;
+        if let Some(stable_rendition_id) = &self.stable_rendition_id {
+            write!(f, ",STABLE-RENDITION-ID=\"{}\"", stable_rendition_id)?;
+        }
+        if self.default {
+            write!(f, ",DEFAULT=YES")?;
+        }
+        if self.autoselect {
+            write!(f, ",AUTOSELECT=YES")?;
+        }
+        if self.forced {
+            write!(f, ",FORCED=YES")?;
+        }
+        if let Some(instream_id) = &self.instream_id {
+            write!(f, ",INSTREAM-ID=\"{}\"", instream_id)?;
+        }
+        if let Some(bit_depth) = &self.bit_depth {
+            write!(f, ",BIT-DEPTH={}", bit_depth)?;
+        }
+        if let Some(sample_rate) = &self.sample_rate {
+            write!(f, ",SAMPLE-RATE={}", sample_rate)?;
+        }
+        write!(f, ",CHARACTERISTICS=\"")?;
+
+        for (i, characteristic) in self.characteristics.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{characteristic}")?;
+        }
+
+        write!(f, "\"")?;
+
+        if let Some(channels) = &self.channels {
+            write!(f, ",CHANNELS={channels}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for StreamInf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#EXT-X-STREAM-INF:")?;
+        write!(f, "BANDWIDTH={}", self.bandwidth)?;
+        if let Some(resolution) = &self.resolution {
+            write!(f, ",RESOLUTION={resolution}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for MultivariantExclusiveTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MultivariantExclusiveTag::Media(media) => write!(f, "{}", media)?,
+            MultivariantExclusiveTag::StreamInf(stream_inf) => write!(f, "{}", stream_inf)?,
+            MultivariantExclusiveTag::IFrameStreamInf(iframe_stream_inf) => {
+                write!(f, "{}", iframe_stream_inf)?
+            }
+            MultivariantExclusiveTag::SessionData(session_data) => write!(f, "{}", session_data)?,
+            MultivariantExclusiveTag::SessionKey(key) => write!(f, "{}", key)?,
+            MultivariantExclusiveTag::ContentSteering(content_steering) => {
+                write!(f, "{}", content_steering)?
+            }
+        };
+
+        Ok(())
+    }
+}
+
+impl Display for MultivariantPlaylist {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "#EXTM3U")?;
+        for tag in &self.shared_tags {
+            writeln!(f, "{}", tag)?;
+        }
+        for excl in &self.exclusive_tags {
+            writeln!(f, "{}", excl)?;
+        }
+        Ok(())
     }
 }
 

@@ -570,7 +570,7 @@ impl MediaMetadata {
 
 impl fmt::Display for Skip {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "#EXT-X-SKIP:SKIPPED-SEGMENTS={}", self.skipped_segments);
+        writeln!(f, "#EXT-X-SKIP:SKIPPED-SEGMENTS={}", self.skipped_segments)?;
         write!(f, ",RECENTLY-REMOVED-DATERANGES=\"")?;
 
         for (i, daterange_id) in self.recently_removed_dateranges.iter().enumerate() {
@@ -639,10 +639,10 @@ impl fmt::Display for DateRange {
         if let Some(planned_duration) = planned_duration {
             write!(f, ",PLANNED-DURATION={planned_duration}")?;
         }
-        if let Some(end_on_next) = end_on_next {
-            if *end_on_next {
-                write!(f, ",END-ON-NEXT=YES")?;
-            }
+        if let Some(end_on_next) = end_on_next
+            && *end_on_next
+        {
+            write!(f, ",END-ON-NEXT=YES")?;
         }
         for (key, value) in extensions.iter() {
             write!(f, ",{key}=\"{value}\"")?;

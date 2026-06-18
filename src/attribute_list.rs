@@ -295,7 +295,7 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "STABLE-RENDITION-ID".into(),
                     value: parsed,
-                    expected: "a valid STABLE-RENDITION-ID according to HLS spec".into(),
+                    expected: "a valid STABLE-RENDITION-ID according to HLS spec",
                 });
             }
             Ok(AttributeValue::QuotedString(parsed))
