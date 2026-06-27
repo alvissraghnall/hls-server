@@ -1,6 +1,8 @@
 use core::fmt;
 use std::fmt::{Display, Formatter};
 
+use aes::cipher::inout::PadError;
+
 use crate::playlist::SharedTag;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -373,5 +375,34 @@ impl std::error::Error for CodecParseError {}
 impl From<CodecParseError> for ParseError {
     fn from(value: CodecParseError) -> Self {
         Self::CodecError(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyError {
+    pub message: String,
+}
+
+impl std::fmt::Display for KeyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for KeyError {}
+
+impl From<aes_gcm::aead::Error> for KeyError {
+    fn from(value: aes_gcm::aead::Error) -> Self {
+        Self {
+            message: value.to_string(),
+        }
+    }
+}
+
+impl From<PadError> for KeyError {
+    fn from(value: PadError) -> Self {
+        Self {
+            message: value.to_string(),
+        }
     }
 }

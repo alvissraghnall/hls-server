@@ -1,8 +1,8 @@
+use crate::error::ParseError;
 use std::{
-    collections::{HashMap, HashSet}, fmt::Display, str::FromStr
+    collections::{HashMap, HashSet},
+    fmt::Display,
 };
-
-use crate::{error::ParseError, playlist::PlayListVariableDefinition};
 
 #[doc = r#"
   An AttributeValue is one of the following:
@@ -74,7 +74,11 @@ impl Display for AttributeValue {
             Self::QuotedString(x) => write!(f, "{}", x),
             Self::EnumeratedString(x) => write!(f, "{}", x),
             // hmmmmmmmmmm [ `clone` ]
-            Self::EnumeratedStringList(x) => write!(f, "{}", x.iter().cloned().collect::<Vec<String>>().join(",")),
+            Self::EnumeratedStringList(x) => write!(
+                f,
+                "{}",
+                x.iter().cloned().collect::<Vec<String>>().join(",")
+            ),
             Self::DecimalResolution { width, height } => write!(f, "{}x{}", width, height),
             Self::XAttribute(name, value) => write!(f, "{}={}", name, value),
         }
@@ -137,7 +141,6 @@ impl AttributeValue {
             _ => None,
         }
     }
-
 }
 
 fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, ParseError> {
@@ -273,7 +276,9 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "SCTE35-IN" => Ok(AttributeValue::HexSequence(parse_hex_sequence(value)?)),
 
         "SKIPPED-SEGMENTS" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
-        "RECENTLY-REMOVED-DATERANGES" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "RECENTLY-REMOVED-DATERANGES" => {
+            Ok(AttributeValue::QuotedString(parse_quoted_string(value)?))
+        }
 
         "TYPE" => {
             let parsed = parse_enumerated_string(value)?;
@@ -281,14 +286,16 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         }
         "BYTERANGE-START" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
         "BYTERANGE-LENGTH" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
-        
+
         "LAST-MSN" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
         "LAST-PART" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
 
         "GROUP-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
         "LANGUAGE" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
         "ASSOC-LANGUAGE" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
-        "DEFAULT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "DEFAULT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
+            value,
+        )?)),
         "STABLE-RENDITION-ID" => {
             let parsed = parse_quoted_string(value)?;
             if !is_valid_stable_rendition_id(&parsed) {
@@ -299,9 +306,13 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
                 });
             }
             Ok(AttributeValue::QuotedString(parsed))
-        },
-        "AUTOSELECT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
-        "FORCED" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        }
+        "AUTOSELECT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
+            value,
+        )?)),
+        "FORCED" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
+            value,
+        )?)),
         "INSTREAM-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
         "BIT-DEPTH" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
         "SAMPLE-RATE" => Ok(AttributeValue::DecimalInteger(value.parse()?)),
@@ -319,7 +330,9 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
             })
         }
         "FRAME-RATE" => Ok(AttributeValue::DecimalFloatingPoint(value.parse()?)),
-        "HDCP-LEVEL" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "HDCP-LEVEL" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
+            value,
+        )?)),
         "ALLOWED-CPC" => {
             let parsed = parse_quoted_string(value)?;
             if !is_valid_cpc_label(&parsed) {
@@ -331,7 +344,9 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
             }
             Ok(AttributeValue::QuotedString(parsed))
         }
-        "VIDEO-RANGE" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "VIDEO-RANGE" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
+            value,
+        )?)),
         "REQ-VIDEO-LAYOUT" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
         "STABLE-VARIANT-ID" => {
             let parsed = parse_quoted_string(value)?;
@@ -355,6 +370,12 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
                 Ok(v) => Ok(AttributeValue::QuotedString(v)),
                 Err(_) => {
                     let parsed_enumerated_string = parse_enumerated_string(value)?;
+                    if parsed_enumerated_string != "NONE" {
+                        return Err(ParseError::InvalidEnumeratedString {
+                            value: parsed_enumerated_string,
+                            expected: &["NONE"],
+                        });
+                    }
                     Ok(AttributeValue::EnumeratedString(parsed_enumerated_string))
                 }
             }
@@ -362,7 +383,9 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         "PATHWAY-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
 
         "DATA-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
-        "FORMAT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(value)?)),
+        "FORMAT" => Ok(AttributeValue::EnumeratedString(parse_enumerated_string(
+            value,
+        )?)),
 
         "SERVER-URI" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
 
@@ -385,9 +408,8 @@ pub(crate) fn parse_attribute_list(s: &str) -> Result<AttributeList, ParseError>
     Ok(attrs)
 }
 
-pub(crate) fn is_valid_cpc_label (s: &str) -> bool {
-    s.bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+pub(crate) fn is_valid_cpc_label(s: &str) -> bool {
+    s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 pub(crate) fn is_valid_ext_x_define(s: &str) -> bool {
@@ -396,10 +418,17 @@ pub(crate) fn is_valid_ext_x_define(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-pub(crate) fn is_valid_stable_rendition_id (s: &str) -> bool {
+pub(crate) fn is_valid_stable_rendition_id(s: &str) -> bool {
     !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'.' || b == b'-' || b == b'_')
+        && s.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || b == b'+'
+                || b == b'/'
+                || b == b'='
+                || b == b'.'
+                || b == b'-'
+                || b == b'_'
+        })
 }
 
 pub(crate) fn is_valid_ext_x_define_allow_empty(s: &str) -> bool {
@@ -417,7 +446,8 @@ pub(crate) fn parse_quoted_string(value: &str) -> Result<String, ParseError> {
     if inner.contains('"') || inner.contains('\n') || inner.contains('\r') {
         return Err(ParseError::InvalidQuotedString {
             value: inner.to_string(),
-            reason: "Quoted string must not contain double quotes, newlines, or carriage returns".into(),
+            reason: "Quoted string must not contain double quotes, newlines, or carriage returns"
+                .into(),
         });
     }
 
@@ -446,7 +476,9 @@ pub(crate) fn parse_enumerated_string_list(value: &str) -> Result<HashSet<String
 pub(crate) fn parse_decimal_resolution(value: &str) -> Result<(u64, u64), ParseError> {
     let parts: Vec<&str> = value.split('x').collect();
     if parts.len() != 2 {
-        return Err(ParseError::InvalidDecimalResolution { value: value.to_string() });
+        return Err(ParseError::InvalidDecimalResolution {
+            value: value.to_string(),
+        });
     }
     let width = parts[0].parse()?;
     let height = parts[1].parse()?;
@@ -455,11 +487,13 @@ pub(crate) fn parse_decimal_resolution(value: &str) -> Result<(u64, u64), ParseE
 
 pub(crate) fn parse_hex_sequence(value: &str) -> Result<Vec<u8>, ParseError> {
     if !value.starts_with("0x") {
-        return Err(ParseError::InvalidHexSequence { value: value.to_string() });
+        return Err(ParseError::InvalidHexSequence {
+            value: value.to_string(),
+        });
     }
     let parsed = value.trim_start_matches("0x");
-    let bytes =
-        hex::decode(parsed).map_err(|_| ParseError::InvalidHexSequence { value: value.to_string() })?;
+    let bytes = hex::decode(parsed).map_err(|_| ParseError::InvalidHexSequence {
+        value: value.to_string(),
+    })?;
     Ok(bytes)
 }
-

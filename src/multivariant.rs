@@ -1720,6 +1720,8 @@ impl Display for Media {
         if let Some(sample_rate) = &self.sample_rate {
             write!(f, ",SAMPLE-RATE={}", sample_rate)?;
         }
+
+        // === CHARACTERISTICS start
         write!(f, ",CHARACTERISTICS=\"")?;
 
         for (i, characteristic) in self.characteristics.iter().enumerate() {
@@ -1728,8 +1730,8 @@ impl Display for Media {
             }
             write!(f, "{characteristic}")?;
         }
-
         write!(f, "\"")?;
+        // === CHARACTERISTICS end
 
         if let Some(channels) = &self.channels {
             write!(f, ",CHANNELS={channels}")?;
@@ -1739,12 +1741,278 @@ impl Display for Media {
     }
 }
 
+impl Display for AllowedCpcEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:", self.keyformat)?;
+        for (i, label) in self.labels.iter().enumerate() {
+            if i > 0 {
+                write!(f, "/")?;
+            }
+            write!(f, "{label}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for VideoRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", format!("{:?}", self).to_uppercase())
+    }
+}
+
 impl Display for StreamInf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "#EXT-X-STREAM-INF:")?;
         write!(f, "BANDWIDTH={}", self.bandwidth)?;
         if let Some(resolution) = &self.resolution {
-            write!(f, ",RESOLUTION={resolution}")?;
+            write!(f, ",RESOLUTION={}x{}", resolution.0, resolution.1)?;
+        }
+        if let Some(avg_bandwidth) = &self.average_bandwidth {
+            write!(f, ",AVERAGE-BANDWIDTH={avg_bandwidth}")?;
+        }
+        if let Some(score) = &self.score {
+            write!(f, ",SCORE={score}")?;
+        }
+
+        // === CODECS start ===
+        write!(f, ",CODECS=\"")?;
+        for (i, codec) in self.codecs.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{codec}")?;
+        }
+        write!(f, "\"")?;
+        // === CODECS end ===
+
+        // === SUPPLEMENTAL-CODECS start ===
+        write!(f, ",SUPPLEMENTAL-CODECS=\"")?;
+        for (i, codec) in self.supplemental_codecs.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{codec}")?;
+        }
+        write!(f, "\"")?;
+        // === SUPPLEMENTAL-CODECS end ===
+
+        if let Some(frame_rate) = &self.frame_rate {
+            write!(f, ",FRAME-RATE={frame_rate}")?;
+        }
+
+        if let Some(hdcp_level) = &self.hdcp_level {
+            write!(f, ",HDCP-LEVEL={hdcp_level}")?;
+        }
+
+        // === ALLOWED-CPC start
+        write!(f, ",ALLOWED-CPC=\"")?;
+        for (i, allowed_cpc_entry) in self.allowed_cpc.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{allowed_cpc_entry}")?;
+        }
+        write!(f, "\"")?;
+        // === ALLOWED-CPC end
+
+        write!(f, ",VIDEO-RANGE={}", self.video_range)?;
+
+        // === REQ-VIDEO-LAYOUT start
+        if let Some(req_video_layout) = &self.req_video_layout {
+            write!(f, ",REQ-VIDEO-LAYOUT=\"")?;
+            for (i, video_layout) in req_video_layout.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{video_layout}")?;
+            }
+            write!(f, "\"")?;
+        }
+        // === REQ-VIDEO-LAYOUT end
+
+        if let Some(stable_variant_id) = &self.stable_variant_id {
+            write!(f, ",STABLE-VARIANT-ID=\"{stable_variant_id}\"")?;
+        }
+
+        if let Some(audio) = &self.audio {
+            write!(f, ",AUDIO=\"{audio}\"")?;
+        }
+
+        if let Some(video) = &self.video {
+            write!(f, ",VIDEO=\"{video}\"")?;
+        }
+
+        if let Some(subtitles) = &self.subtitles {
+            write!(f, ",SUBTITLES=\"{subtitles}\"")?;
+        }
+
+        if let Some(closed_captions) = &self.closed_captions {
+            if closed_captions == "NONE" {
+                write!(f, ",CLOSED-CAPTIONS={closed_captions}")?;
+            } else {
+                write!(f, ",CLOSED-CAPTIONS=\"{closed_captions}\"")?;
+            }
+        }
+
+        if let Some(pathway_id) = &self.pathway_id {
+            write!(f, ",PATHWAY-ID=\"{pathway_id}\"")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for ViewPresentationEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, entry) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, "/")?;
+            }
+            write!(f, "{}", entry)?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for PresentationEntrySpecifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PresentationEntrySpecifier::VideoChannelSpecifier(video) => write!(f, "{}", video),
+            PresentationEntrySpecifier::ProjectionSpecifier(proj) => write!(f, "{}", proj),
+        }
+    }
+}
+
+impl Display for VideoChannelSpecifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VideoChannelSpecifier::Stereo => write!(f, "CH-STEREO"),
+            VideoChannelSpecifier::Mono => write!(f, "CH-MONO"),
+        }
+    }
+}
+
+impl Display for ProjectionSpecifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProjectionSpecifier::Rect => write!(f, "PROJ-RECT"),
+            ProjectionSpecifier::Equi => write!(f, "PROJ-EQUI"),
+            ProjectionSpecifier::Hequ => write!(f, "PROJ-HEQU"),
+            ProjectionSpecifier::Prim => write!(f, "PROJ-PRIM"),
+        }
+    }
+}
+
+impl Display for HdcpLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HdcpLevel::Type0 => write!(f, "TYPE-0"),
+            HdcpLevel::Type1 => write!(f, "TYPE-1"),
+            HdcpLevel::None => write!(f, "NONE"),
+        }
+    }
+}
+
+impl Display for IFrameStreamInf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#EXT-X-I-FRAME-STREAM-INF:")?;
+        write!(f, "BANDWIDTH={}", self.bandwidth)?;
+        write!(f, ",URI=\"{}\"", self.uri)?;
+        if let Some(resolution) = &self.resolution {
+            write!(f, ",RESOLUTION={}x{}", resolution.0, resolution.1)?;
+        }
+        if let Some(avg_bandwidth) = &self.average_bandwidth {
+            write!(f, ",AVERAGE-BANDWIDTH={avg_bandwidth}")?;
+        }
+        if let Some(score) = &self.score {
+            write!(f, ",SCORE={score}")?;
+        }
+
+        // === CODECS start ===
+        write!(f, ",CODECS=\"")?;
+        for (i, codec) in self.codecs.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{codec}")?;
+        }
+        write!(f, "\"")?;
+        // === CODECS end ===
+
+        // === SUPPLEMENTAL-CODECS start ===
+        write!(f, ",SUPPLEMENTAL-CODECS=\"")?;
+        for (i, codec) in self.supplemental_codecs.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{codec}")?;
+        }
+        write!(f, "\"")?;
+        // === SUPPLEMENTAL-CODECS end ===
+
+        if let Some(hdcp_level) = &self.hdcp_level {
+            write!(f, ",HDCP-LEVEL={hdcp_level}")?;
+        }
+
+        // === ALLOWED-CPC start
+        write!(f, ",ALLOWED-CPC=\"")?;
+        for (i, allowed_cpc_entry) in self.allowed_cpc.iter().enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{allowed_cpc_entry}")?;
+        }
+        write!(f, "\"")?;
+        // === ALLOWED-CPC end
+
+        write!(f, ",VIDEO-RANGE={}", self.video_range)?;
+
+        // === REQ-VIDEO-LAYOUT start
+        if let Some(req_video_layout) = &self.req_video_layout {
+            write!(f, ",REQ-VIDEO-LAYOUT=\"")?;
+            for (i, video_layout) in req_video_layout.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{video_layout}")?;
+            }
+            write!(f, "\"")?;
+        }
+        // === REQ-VIDEO-LAYOUT end
+
+        if let Some(stable_variant_id) = &self.stable_variant_id {
+            write!(f, ",STABLE-VARIANT-ID=\"{stable_variant_id}\"")?;
+        }
+
+        if let Some(video) = &self.video {
+            write!(f, ",VIDEO=\"{video}\"")?;
+        }
+
+        if let Some(pathway_id) = &self.pathway_id {
+            write!(f, ",PATHWAY-ID=\"{pathway_id}\"")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for SessionDataFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", format!("{:?}", self).to_uppercase())
+    }
+}
+
+impl Display for SessionData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#EXT-X-SESSION-DATA:")?;
+        write!(f, "DATA-ID=\"{}\"", self.data_id)?;
+        match &self.data_type {
+            SessionDataType::Value(value) => write!(f, ",VALUE=\"{value}\"")?,
+            SessionDataType::Uri(uri) => write!(f, ",URL=\"{uri}\"")?,
+        };
+        write!(f, ",FORMAT={}", self.format)?;
+        if let Some(language) = &self.language {
+            write!(f, ",LANGUAGE={language}")?;
         }
 
         Ok(())
@@ -1762,7 +2030,11 @@ impl Display for MultivariantExclusiveTag {
             MultivariantExclusiveTag::SessionData(session_data) => write!(f, "{}", session_data)?,
             MultivariantExclusiveTag::SessionKey(key) => write!(f, "{}", key)?,
             MultivariantExclusiveTag::ContentSteering(content_steering) => {
-                write!(f, "{}", content_steering)?
+                write!(f, "#EXT-X-CONTENT-STEERING:")?;
+                write!(f, "SERVER-URI=\"{}\"", content_steering.0)?;
+                if let Some(pathway_id) = &content_steering.1 {
+                    write!(f, ",PATHWAY-ID=\"{pathway_id}\"")?;
+                }
             }
         };
 
