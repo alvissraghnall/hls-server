@@ -2,7 +2,7 @@ use std::{fmt::Display, str::FromStr};
 
 use crate::{
     CRLF,
-    attribute_list::{AttributeList, AttributeValue, parse_attribute_list},
+    attribute_list::{parse_attribute_list},
     error::{ParseError, ValidationError},
     playlist::{PlayListVariableDefinition, SharedTag},
 };

@@ -13,6 +13,10 @@ pub struct Span {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
+    BadOrder {
+        expected: &'static str,
+        found: &'static str,
+    },
     InvalidLine(String),
     UnknownTag {
         tag: String,
@@ -128,6 +132,7 @@ impl std::fmt::Display for ParseError {
                 f,
                 "Mixed playlist types, e.g. Multivariant tags in a media playlist, or vice versa."
             ),
+            ParseError::BadOrder { expected, found } => write!(f, "Bad order: expected {expected}, found {found}"),            
             ParseError::CodecError(e) => write!(f, "codec: {e}"),
             ParseError::InvalidLine(line) => write!(f, "Invalid line: {}", line),
             ParseError::UnknownTag { tag, span } => {

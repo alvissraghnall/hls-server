@@ -68,6 +68,8 @@ struct PlaylistParser {
 
     segments: Vec<MediaSegment>,
     media_metadata: Vec<MediaMetadata>,
+
+    seen_first_media_segment: bool,
 }
 
 enum PlaylistKind {
@@ -106,13 +108,18 @@ impl PlaylistParser {
             uris: Vec::new(),
             segments: Vec::new(),
             media_metadata: Vec::new(),
+            seen_first_media_segment: false,
         }
+    }
+
+    fn set_seen_first_media_segment(&mut self, seen: bool) {
+        self.seen_first_media_segment = seen;
     }
 }
 
 impl PlaylistParser {
     fn parse_line(
-        &self,
+        &mut self,
         line: &str,
         line_number: usize,
         segment_state: &mut ParseSegmentState,
@@ -146,6 +153,32 @@ impl PlaylistParser {
         }
 
         if let Ok(tag) = line.parse::<MediaExclusiveTag>() {
+            // ensure media_sequence and discontinuity_sequence are set
+            // before the first media segment is parsed
+            if self.seen_first_media_segment
+                && matches!(
+                    tag,
+                    MediaExclusiveTag::MediaSequence(_)
+                        | MediaExclusiveTag::DiscontinuitySequence(_)
+                )
+            {
+                return Err(ParseError::MediaSequenceAfterSegment);
+            }
+
+            // ensure discontinuity_sequence is set before discontinuity media segment tag
+            if matches!(tag, MediaExclusiveTag::DiscontinuitySequence(_))
+                && self
+                    .segments
+                    .iter()
+                    .find(|seg| seg.get_discontinuity())
+                    .is_some()
+            {
+                return Err(ParseError::BadOrder {
+                    expected: "Discontinuity Sequence before any Discontinuity media segment tag",
+                    found: "Discontinuity media segment tag after Discontinuity Sequence",
+                });
+            }
+
             return Ok(ParsedLine::MediaTag(tag));
         }
 
@@ -154,6 +187,9 @@ impl PlaylistParser {
         }
 
         if segment_state.parse_line(line).is_ok() {
+            if !self.seen_first_media_segment {
+                self.set_seen_first_media_segment(true);
+            }
             println!("{:?}", line);
             return Ok(ParsedLine::MediaSegment);
         }

@@ -25,7 +25,6 @@ impl Tag for Playlist {
             .version()
             .ok_or_else(|| ValidationError::MissingRequiredTag("#EXT-X-VERSION".into()))?;
 
-        //
         // A Playlist MUST indicate an EXT-X-VERSION of 11 or higher if it
         // contains:
 
@@ -49,7 +48,25 @@ impl Tag for Playlist {
                     .exclusive_tags
                     .contains(&MediaExclusiveTag::IFramesOnly);
 
+                let target_duration = media_playlist
+                    .exclusive_tags
+                    .iter()
+                    .find_map(|x| {
+                        if let MediaExclusiveTag::TargetDuration(d) = x {
+                            return Some(*d);
+                        }
+                        None
+                    })
+                    .ok_or_else(|| ValidationError::MissingRequiredTag("#EXT-X-TARGETDURATION".into()))?;
+                
                 for seg in &media_playlist.segments {
+                    let seg_duration = seg.get_duration();
+
+                    // ensure target duration is not exceeded by any segment
+                    if seg_duration > &target_duration {
+                        return Err(ValidationError::InvalidTargetDuration);
+                    }
+                    
                     if let Some(key) = seg.get_key() {
                         require_version!(
                             version,

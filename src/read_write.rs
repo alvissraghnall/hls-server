@@ -1,12 +1,12 @@
 use std::{fs, path::Path};
 
-use crate::{error::PlaylistReadError, shared::Tag};
+use crate::{error::PlaylistReadError};
 
 pub(crate) fn read_from_file(path: impl AsRef<Path>) -> Result<String, PlaylistReadError> {
-    let bytes = fs::read(path)?;
+    let mut bytes = fs::read(path)?;
 
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        return Err(PlaylistReadError::BomPresent);
+        bytes = bytes[3..].to_vec();
     }
 
     let content = String::from_utf8(bytes)?;

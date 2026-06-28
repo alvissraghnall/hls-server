@@ -1,13 +1,12 @@
 use std::{
     collections::HashMap,
-    fmt::{self, Display, write},
+    fmt::{self},
     str::FromStr,
 };
 
-use chrono::{Date, DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset};
 
 use crate::{
-    CRLF,
     attribute_list::{AttributeList, AttributeValue, parse_attribute_list},
     error::{ParseError, Span},
     segment::parse_datetime,

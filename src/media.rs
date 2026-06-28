@@ -1,13 +1,16 @@
-use std::{fmt::{self, Display}, str::FromStr};
+use std::{
+    fmt::{self, Display},
+    str::FromStr,
+};
 
 use crate::{
     attribute_list::{
         AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
     },
     error::{ParseError, ValidationError},
-    multivariant::{MultivariantPlaylist},
+    multivariant::MultivariantPlaylist,
     playlist::{MediaMetadata, PlayListVariableDefinition, SharedTag},
-    segment::{MediaSegment},
+    segment::MediaSegment,
     uri::decode,
 };
 
@@ -56,8 +59,7 @@ struct PlaylistContext<'a> {
     parent_multivariant: Option<&'a MultivariantPlaylist>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 struct ServerControl {
     can_skip_until: Option<f64>, // value must be at least 6x target duration
     can_skip_dateranges: Option<bool>, // requires the former
@@ -102,7 +104,7 @@ impl MediaPlaylist {
 
     pub(crate) fn apply_shared_tag(&mut self, tag: SharedTag) -> Result<(), ParseError> {
         match tag {
-            SharedTag::Version(v) => {
+            SharedTag::Version(_) => {
                 if self
                     .shared_tags
                     .iter()
@@ -265,20 +267,19 @@ impl MediaPlaylist {
         }
 
         for tag in &self.exclusive_tags {
-            if let MediaExclusiveTag::TargetDuration(d) = tag
-                && self
-                    .segments
-                    .iter()
-                    .any(|s| s.get_duration().round() > *d as i64)
-            {
-                return Err(ValidationError::InvalidMultivariantAttribute);
-            }
+            // ensure target duration is not exceeded by any segment
+            // if let MediaExclusiveTag::TargetDuration(d) = tag
+            //     && self
+            //         .segments
+            //         .iter()
+            //         .any(|s| s.get_duration().round() > *d as i64)
+            // {
+            //     return Err(ValidationError::InvalidMultivariantAttribute);
+            // }
         }
 
         Ok(())
     }
-
-    
 }
 
 impl Display for MediaExclusiveTag {
@@ -331,48 +332,33 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
         s if line.starts_with("#EXT-X-MEDIA-SEQUENCE:") => {
             let media_sequence_number = s
                 .strip_prefix("#EXT-X-MEDIA-SEQUENCE:")
-                .and_then(|v| v.parse::<u64>().ok());
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0);
 
-            if let Some(v) = media_sequence_number {
-                Ok(MediaExclusiveTag::MediaSequence(v))
-            } else {
-                Err(ParseError::InvalidLine(format!(
-                    "{line} is not valid according to HLS spec."
-                )))
-            }
+            Ok(MediaExclusiveTag::MediaSequence(media_sequence_number))
         }
         s if line.starts_with("#EXT-X-DISCONTINUITY-SEQUENCE:") => {
             let discontinuity_sequence_number = s
                 .strip_prefix("#EXT-X-DISCONTINUITY-SEQUENCE:")
                 .and_then(|v| v.parse::<u64>().ok());
 
-            if let Some(v) = discontinuity_sequence_number {
-                Ok(MediaExclusiveTag::DiscontinuitySequence(v))
-            } else {
-                Err(ParseError::InvalidLine(format!(
-                    "{line} is not valid according to HLS spec."
-                )))
-            }
+            Ok(MediaExclusiveTag::DiscontinuitySequence(
+                discontinuity_sequence_number.unwrap_or(0),
+            ))
         }
-        s if line.starts_with("#EXT-X-ENDLIST") => {
-            Ok(MediaExclusiveTag::EndList)
-        }
+        s if line.starts_with("#EXT-X-ENDLIST") => Ok(MediaExclusiveTag::EndList),
         s if line.starts_with("#EXT-X-PLAYLIST-TYPE:") => {
-            let playlist_type = s
+            let value = s
                 .strip_prefix("#EXT-X-PLAYLIST-TYPE:")
-                .and_then(|v| v.parse::<PlayListType>().ok());
+                .ok_or(ParseError::InvalidLine(line.into()))?;
 
-            if let Some(v) = playlist_type {
-                Ok(MediaExclusiveTag::PlaylistType(v))
-            } else {
-                Err(ParseError::InvalidLine(format!(
-                    "{line} is not valid according to HLS spec."
-                )))
-            }
+            let playlist_type = value.parse::<PlayListType>().map_err(|_| {
+                ParseError::InvalidLine(format!("{line} is not valid according to HLS spec."))
+            })?;
+
+            Ok(MediaExclusiveTag::PlaylistType(playlist_type))
         }
-        s if line.starts_with("#EXT-X-I-FRAMES-ONLY") => {
-            Ok(MediaExclusiveTag::IFramesOnly)
-        }
+        s if line.starts_with("#EXT-X-I-FRAMES-ONLY") => Ok(MediaExclusiveTag::IFramesOnly),
         s if line.starts_with("#EXT-X-PART-INF:") => {
             let attrs = s
                 .strip_prefix("#EXT-X-PART-INF:")
@@ -535,11 +521,11 @@ mod tests {
     #[test]
     fn test_media_playlist_validate_import_fail() {
         let mut playlist = MediaPlaylist::default();
-        playlist.shared_tags.push(SharedTag::Variable(
-            PlayListVariableDefinition::Import {
+        playlist
+            .shared_tags
+            .push(SharedTag::Variable(PlayListVariableDefinition::Import {
                 name: "IMPORT_ME".to_string(),
-            },
-        ));
+            }));
 
         let ctx = PlaylistContext {
             uri: "playlist.m3u8",

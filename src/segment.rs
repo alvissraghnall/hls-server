@@ -31,7 +31,7 @@ pub(crate) struct ByteRange {
     offset: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub(crate) enum DurationValue {
     Int(u32),
     Float(f32),
@@ -121,6 +121,10 @@ impl MediaSegment {
             bitrate,
             part,
         }
+    }
+
+    pub(crate) fn get_discontinuity(&self) -> bool {
+        self.discontinuity
     }
 
     #[inline(always)]
@@ -545,6 +549,18 @@ impl PartialEq<f32> for DurationValue {
     }
 }
 
+impl PartialEq<u64> for DurationValue {
+    fn eq(&self, other: &u64) -> bool {
+        self.round_u64() == *other
+    }
+}
+
+impl PartialOrd<u64> for DurationValue {
+    fn partial_cmp(&self, other: &u64) -> Option<std::cmp::Ordering> {
+        self.round_u64().partial_cmp(other)
+    }
+}
+
 impl DurationValue {
     pub(crate) fn round(&self) -> i64 {
         match self {
@@ -552,6 +568,14 @@ impl DurationValue {
             DurationValue::Float(n) => n.round() as i64,
         }
     }
+
+    pub(crate) fn round_u64(&self) -> u64 {
+        match self {
+            DurationValue::Int(n) => *n as u64,
+            DurationValue::Float(n) => n.round() as u64,
+        }
+    }
+    
 }
 
 impl PartialEq<u32> for DurationValue {
