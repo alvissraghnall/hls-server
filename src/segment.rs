@@ -64,7 +64,7 @@ pub(crate) enum Method {
 pub(crate) struct ParseSegmentState {
     current_key: Option<Key>,
     current_map: Option<Map>,
-    pending_segment: Option<PendingSegment>,
+    pending_segment: PendingSegment,
     previous_byterange_end: Option<u64>,
     previous_byterange_uri: Option<String>,
     current_uri: Option<String>,
@@ -271,23 +271,19 @@ impl ParseSegmentState {
         Self {
             current_key: None,
             current_map: None,
-            pending_segment: Some(PendingSegment::new()),
+            pending_segment: PendingSegment::new(),
             previous_byterange_end: None,
             previous_byterange_uri: None,
             current_uri: None,
         }
     }
-    pub(crate) fn parse_line(&mut self, line: &str) -> Result<(), ParseError> {
+    pub(crate) fn accept(&mut self, line: &str) -> Result<(), ParseError> {
         self.pending_segment
-            .as_mut()
-            .ok_or(ParseError::NoPendingSegment)?
             .parse(line)
     }
 
-    pub(crate) fn take_pending_segment(&mut self) -> Option<PendingSegment> {
-        let pseg = self.pending_segment.take();
-        self.pending_segment = Some(PendingSegment::new());
-        pseg
+    pub(crate) fn finish_pending_segment(&mut self) -> PendingSegment {
+        std::mem::replace(&mut self.pending_segment, PendingSegment::new())
     }
 }
 

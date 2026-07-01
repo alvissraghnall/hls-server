@@ -32,13 +32,13 @@ pub(crate) enum PlayListType {
     Event,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MediaTag {
     Shared(SharedTag),
     Exclusive(MediaExclusiveTag),
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct MediaPlaylist {
     pub shared_tags: Vec<SharedTag>,
     pub exclusive_tags: Vec<MediaExclusiveTag>,
@@ -48,10 +48,6 @@ pub struct MediaPlaylist {
 
     pub(crate) media_metadata: Vec<MediaMetadata>,
 
-    // track whether we've seen the first segment yet for
-    // media sequence number validation
-    // (i.e. the first segment should only come after #EXT-X-MEDIA-SEQUENCE)
-    seen_first_segment: bool, // hmmmm ???
 }
 
 struct PlaylistContext<'a> {

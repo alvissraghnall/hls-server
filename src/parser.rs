@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, str::FromStr};
 
 use itertools::Itertools;
 
@@ -10,6 +10,7 @@ use crate::{
     push_line::PushLine,
     read_write,
     segment::{MediaSegment, ParseSegmentState},
+    uri::Uri,
 };
 
 static EXTINF: &'static str = "#EXTINF";
@@ -52,24 +53,37 @@ enum ParsedLine {
     MediaMetadata(MediaMetadata),
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum Playlist {
     Media(MediaPlaylist),
     Multivariant(MultivariantPlaylist),
 }
 
+enum PlaylistItem {
+    SharedTag(SharedTag),
+
+    MediaTag(MediaExclusiveTag),
+
+    Segment(MediaSegment),
+
+    Metadata(MediaMetadata),
+
+    MultivariantTag(MultivariantExclusiveTag),
+
+    Uri(Uri, usize),
+}
+
 struct PlaylistParser {
     kind: PlaylistKind,
 
-    shared_tags: Vec<SharedTag>,
+    items: Vec<PlaylistItem>,
 
-    media_tags: Vec<MediaExclusiveTag>,
-    multivariant_tags: Vec<MultivariantExclusiveTag>,
-    uris: Vec<(String, usize)>,
+    validator: StructuralValidator,
+}
 
-    segments: Vec<MediaSegment>,
-    media_metadata: Vec<MediaMetadata>,
-
+struct StructuralValidator {
     seen_first_media_segment: bool,
+    seen_discontinuity: bool,
 }
 
 enum PlaylistKind {
@@ -90,7 +104,7 @@ pub fn parse_file_into_playlist(
     for raw_line in content.lines() {
         line_number += 1;
 
-        let line = parser.parse_line(raw_line, line_number, &mut parse_segment_state)?;
+        let line = parser.parse_line_kind(raw_line, line_number, &mut parse_segment_state)?;
 
         parser.consume(line, line_number, &mut parse_segment_state)?;
     }
@@ -102,23 +116,17 @@ impl PlaylistParser {
     pub(crate) fn new() -> Self {
         Self {
             kind: PlaylistKind::Unknown,
-            shared_tags: Vec::new(),
-            media_tags: Vec::new(),
-            multivariant_tags: Vec::new(),
-            uris: Vec::new(),
-            segments: Vec::new(),
-            media_metadata: Vec::new(),
-            seen_first_media_segment: false,
+            items: Vec::new(),
+            validator: StructuralValidator {
+                seen_discontinuity: false,
+                seen_first_media_segment: false,
+            },
         }
-    }
-
-    fn set_seen_first_media_segment(&mut self, seen: bool) {
-        self.seen_first_media_segment = seen;
     }
 }
 
 impl PlaylistParser {
-    fn parse_line(
+    fn parse_line_kind(
         &mut self,
         line: &str,
         line_number: usize,
@@ -153,32 +161,6 @@ impl PlaylistParser {
         }
 
         if let Ok(tag) = line.parse::<MediaExclusiveTag>() {
-            // ensure media_sequence and discontinuity_sequence are set
-            // before the first media segment is parsed
-            if self.seen_first_media_segment
-                && matches!(
-                    tag,
-                    MediaExclusiveTag::MediaSequence(_)
-                        | MediaExclusiveTag::DiscontinuitySequence(_)
-                )
-            {
-                return Err(ParseError::MediaSequenceAfterSegment);
-            }
-
-            // ensure discontinuity_sequence is set before discontinuity media segment tag
-            if matches!(tag, MediaExclusiveTag::DiscontinuitySequence(_))
-                && self
-                    .segments
-                    .iter()
-                    .find(|seg| seg.get_discontinuity())
-                    .is_some()
-            {
-                return Err(ParseError::BadOrder {
-                    expected: "Discontinuity Sequence before any Discontinuity media segment tag",
-                    found: "Discontinuity media segment tag after Discontinuity Sequence",
-                });
-            }
-
             return Ok(ParsedLine::MediaTag(tag));
         }
 
@@ -186,10 +168,7 @@ impl PlaylistParser {
             return Ok(ParsedLine::MultivariantTag(tag));
         }
 
-        if segment_state.parse_line(line).is_ok() {
-            if !self.seen_first_media_segment {
-                self.set_seen_first_media_segment(true);
-            }
+        if segment_state.accept(line).is_ok() {
             println!("{:?}", line);
             return Ok(ParsedLine::MediaSegment);
         }
@@ -226,12 +205,12 @@ impl PlaylistParser {
 
             ParsedLine::MediaTag(tag) => {
                 self.promote_to_media()?;
-                self.media_tags.push(tag);
+                self.consume_media_tag(tag)?;
             }
 
             ParsedLine::MultivariantTag(tag) => {
                 self.promote_to_multivariant()?;
-                self.multivariant_tags.push(tag);
+                self.consume_multivariant_tag(tag)?;
             }
 
             ParsedLine::MediaSegment => {
@@ -239,7 +218,7 @@ impl PlaylistParser {
             }
 
             ParsedLine::MediaMetadata(tag) => {
-                self.media_metadata.push(tag);
+                self.items.push(PlaylistItem::Metadata(tag));
             }
         }
         Ok(())
@@ -268,23 +247,15 @@ impl PlaylistParser {
     }
 
     fn consume_shared_tag(&mut self, tag: SharedTag) {
-        self.shared_tags.push(tag);
+        self.items.push(PlaylistItem::SharedTag(tag));
     }
 
     fn consume_media_tag(&mut self, tag: MediaExclusiveTag) -> Result<(), ParseError> {
-        match self.kind {
-            PlaylistKind::Unknown => {
-                // self.media_tags.push(tag);
-                Ok(())
-            }
+        self.validator.consume_media_tag(&tag)?;
 
-            PlaylistKind::Media => {
-                self.media_tags.push(tag);
-                Ok(())
-            }
+        self.items.push(PlaylistItem::MediaTag(tag));
 
-            PlaylistKind::Multivariant => Err(ParseError::MixedPlaylistTypes),
-        }
+        Ok(())
     }
 
     fn consume_multivariant_tag(
@@ -294,10 +265,11 @@ impl PlaylistParser {
         match self.kind {
             PlaylistKind::Unknown => {
                 // self.multivariant_tags.push(tag);
+                // self.items.push(PlaylistItem::MultivariantTag(tag));
                 Ok(())
             }
             PlaylistKind::Multivariant => {
-                self.multivariant_tags.push(tag);
+                self.items.push(PlaylistItem::MultivariantTag(tag));
                 Ok(())
             }
 
@@ -316,29 +288,30 @@ impl PlaylistParser {
                 // A standalone URI lowk implies we're in a media playlist
                 self.promote_to_media()?;
                 let pseg = segment_state
-                    .take_pending_segment()
-                    .ok_or(ParseError::NoPendingSegment)?;
+                    .finish_pending_segment();
                 let media_segment = pseg.build(uri.as_str().into())?;
-                self.segments.push(media_segment);
+                self.items.push(PlaylistItem::Segment(media_segment));
 
-                self.uris.push((uri, line_number));
+                self.items
+                    .push(PlaylistItem::Uri(uri.parse()?, line_number));
             }
             PlaylistKind::Media => {
                 let pseg = segment_state
-                    .take_pending_segment()
-                    .ok_or(ParseError::NoPendingSegment)?;
+                    .finish_pending_segment();
                 let media_segment = pseg.build(uri.as_str().into())?;
-                self.segments.push(media_segment);
+                self.items.push(PlaylistItem::Segment(media_segment));
 
                 // media segment, i think we should store uri's and line number
                 // so we could enforce media segment validation - eg tags being for next n occurences
                 // of uri until we see that tag again..etc
-                self.uris.push((uri, line_number));
+                self.items
+                    .push(PlaylistItem::Uri(uri.parse()?, line_number));
             }
             PlaylistKind::Multivariant => {
                 // in multivariant playlists, a URI line follows a tag like
                 // #EXT-X-STREAM-INF. It points to a sub-playlist.
-                self.uris.push((uri, line_number));
+                self.items
+                    .push(PlaylistItem::Uri(uri.parse()?, line_number));
             }
         }
         Ok(())
@@ -350,50 +323,44 @@ impl PlaylistParser {
                 let mut media_playlist = MediaPlaylist::default();
 
                 // id prefer to use itertools::zip_longest tbf
-                for tag in self.media_tags.into_iter().zip_longest(self.shared_tags) {
+                for tag in self.items.into_iter() {
                     match tag {
-                        itertools::EitherOrBoth::Both(media, shared) => {
-                            media_playlist.apply_exclusive_tag(media)?;
+                        PlaylistItem::SharedTag(shared) => {
                             media_playlist.apply_shared_tag(shared)?;
                         }
-                        itertools::EitherOrBoth::Left(media) => {
+                        PlaylistItem::MediaTag(media) => {
                             media_playlist.apply_exclusive_tag(media)?;
                         }
-                        itertools::EitherOrBoth::Right(shared) => {
-                            media_playlist.apply_shared_tag(shared)?;
+                        PlaylistItem::Segment(seg) => {
+                            media_playlist.segments.push(seg);
                         }
+                        PlaylistItem::Metadata(metadata) => {
+                            media_playlist.media_metadata.push(metadata);
+                        }
+                        _ => {}
                     }
                 }
 
-                media_playlist.segments = self.segments;
-                media_playlist.media_metadata = self.media_metadata;
-
-                // combine self.media_tags and self.uris into MediaPlaylist
                 Ok(Playlist::Media(media_playlist))
             }
             PlaylistKind::Multivariant => {
                 let mut multivariant_playlist = MultivariantPlaylist::default();
 
                 for tag in self
-                    .multivariant_tags
+                    .items
                     .into_iter()
-                    .zip_longest(self.shared_tags)
                 {
                     match tag {
-                        itertools::EitherOrBoth::Both(media, shared) => {
-                            multivariant_playlist.apply_exclusive_tag(media)?;
+                        PlaylistItem::MultivariantTag(multi_tag) => {
+                            multivariant_playlist.apply_exclusive_tag(multi_tag)?;
+                        }
+                        PlaylistItem::SharedTag(shared) => {
                             multivariant_playlist.apply_shared_tag(shared)?;
                         }
-                        itertools::EitherOrBoth::Left(media) => {
-                            multivariant_playlist.apply_exclusive_tag(media)?;
-                        }
-                        itertools::EitherOrBoth::Right(shared) => {
-                            multivariant_playlist.apply_shared_tag(shared)?;
-                        }
+                        _ => {}
                     }
                 }
 
-                // combine self.multivariant_tags and self.uris into MultivariantPlaylist
                 Ok(Playlist::Multivariant(multivariant_playlist))
             }
             PlaylistKind::Unknown => {
@@ -401,6 +368,70 @@ impl PlaylistParser {
                 // should pro'lly default to Media for now
                 Ok(Playlist::Media(MediaPlaylist::default()))
             }
+        }
+    }
+}
+
+impl FromStr for Playlist {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    
+        let mut parser = PlaylistParser::new();
+        let mut parse_segment_state = ParseSegmentState::new();
+    
+        let mut line_number = 0;
+        for raw_line in s.lines() {
+            line_number += 1;
+    
+            let line = parser.parse_line_kind(raw_line, line_number, &mut parse_segment_state)?;
+    
+            parser.consume(line, line_number, &mut parse_segment_state)?;
+        }
+    
+        Ok(parser.finish()?)
+    }
+}
+
+impl StructuralValidator {
+    fn consume_media_tag(&mut self, tag: &MediaExclusiveTag) -> Result<(), ParseError> {
+        match tag {
+            MediaExclusiveTag::MediaSequence(_) => {
+                if self.seen_first_media_segment {
+                    return Err(ParseError::BadOrder {
+                        expected: "Media Sequence before first media segment tag",
+                        found: "Media segment tag after Media Sequence",
+                    });
+                }
+            }
+
+            MediaExclusiveTag::DiscontinuitySequence(_) => {
+                if self.seen_first_media_segment {
+                    return Err(ParseError::BadOrder {
+                        expected: "Discontinuity Sequence before first media segment tag",
+                        found: "Discontinuity media segment tag after first Media segment tag",
+                    });
+                }
+
+                if self.seen_discontinuity {
+                    return Err(ParseError::BadOrder {
+                        expected: "Discontinuity Sequence before any Discontinuity media segment tag",
+                        found: "Discontinuity media segment tag after Discontinuity Sequence",
+                    });
+                }
+            }
+
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn consume_segment(&mut self, segment: &MediaSegment) {
+        self.seen_first_media_segment = true;
+
+        if segment.get_discontinuity() {
+            self.seen_discontinuity = true;
         }
     }
 }
@@ -554,5 +585,23 @@ mod tests {
             }
             Err(e) => panic!("Failed due to: {:?}", e),
         }
+    }
+
+    #[test]
+    fn test_simple_back_and_forth() {
+        
+        let playlist_file = Path::new(ROOT)
+            .join("examples")
+            .join("01-dead-simple-media.m3u8");
+
+        let playlist = parse_file_into_playlist(playlist_file.clone()).unwrap();
+        let original = std::fs::read_to_string(playlist_file).unwrap();
+        
+        let rendered = playlist.to_string();
+        
+        let reparsed = Playlist::from_str(&rendered).unwrap();
+        
+        assert_eq!(original, rendered);
+        assert_eq!(playlist, reparsed);
     }
 }

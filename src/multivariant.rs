@@ -13,7 +13,7 @@ use crate::{
     uri::{Uri, decode},
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SessionData {
     data_id: String,
     data_type: SessionDataType,
@@ -21,7 +21,7 @@ pub(crate) struct SessionData {
     language: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 enum SessionDataFormat {
     Raw,
     #[default]
@@ -32,20 +32,20 @@ struct PlaylistContext<'a> {
     uri: &'a str,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum SessionDataType {
     Value(String),
     Uri(Uri),
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct MultivariantPlaylist {
     pub(crate) shared_tags: Vec<SharedTag>,
     pub(crate) exclusive_tags: Vec<MultivariantExclusiveTag>,
     pub(crate) variables: Vec<PlayListVariableDefinition>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum MultivariantExclusiveTag {
     Media(Media),
     StreamInf(StreamInf),
@@ -138,7 +138,7 @@ pub(crate) enum HdcpLevel {
     None,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Media {
     media_type: MediaType,
     uri: Option<Uri>,
