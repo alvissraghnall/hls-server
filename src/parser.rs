@@ -103,6 +103,7 @@ pub fn parse_file_into_playlist(
     let mut line_number = 0;
     for raw_line in content.lines() {
         line_number += 1;
+        println!("line: {}", raw_line.trim());
 
         let line = parser.parse_line_kind(raw_line, line_number, &mut parse_segment_state)?;
 
@@ -132,7 +133,7 @@ impl PlaylistParser {
         line_number: usize,
         segment_state: &mut ParseSegmentState,
     ) -> Result<ParsedLine, ParseError> {
-        let line = line.trim();
+        // println!("line: {}", line);
 
         if line_number == 1 {
             if line == Playlist::EXTM3U {
@@ -332,10 +333,10 @@ impl PlaylistParser {
                             media_playlist.apply_exclusive_tag(media)?;
                         }
                         PlaylistItem::Segment(seg) => {
-                            media_playlist.segments.push(seg);
+                            media_playlist.items.push(crate::media::MediaPlaylistItem::MediaSegment(seg));
                         }
                         PlaylistItem::Metadata(metadata) => {
-                            media_playlist.media_metadata.push(metadata);
+                            media_playlist.items.push(crate::media::MediaPlaylistItem::Metadata(metadata));
                         }
                         _ => {}
                     }
@@ -463,10 +464,10 @@ impl Display for Playlist {
         writeln!(f, "{}", Self::EXTM3U)?;
         match self {
             Playlist::Media(media_playlist) => {
-                writeln!(f, "{}", media_playlist)
+                write!(f, "{}", media_playlist)
             }
             Playlist::Multivariant(multivariant_playlist) => {
-                writeln!(f, "{}", multivariant_playlist)
+                write!(f, "{}", multivariant_playlist)
             }
         }
     }
@@ -477,7 +478,7 @@ mod tests {
 
     use std::path::Path;
 
-    use crate::{media::PlayListType, uri::Uri};
+    use crate::{media::PlayListType, segment, uri::Uri};
 
     use super::*;
 
@@ -499,20 +500,22 @@ mod tests {
                 assert!(media.is_some());
 
                 if let Some(media) = media {
-                    println!("{}", media.segments.len());
-                    assert!(media.shared_tags.contains(&SharedTag::Version(3)));
+                    println!("{}", media.get_segments().len());
+                    assert!(media.get_shared_tags().contains(&&SharedTag::Version(3)));
                     assert!(
                         media
-                            .exclusive_tags
-                            .contains(&MediaExclusiveTag::TargetDuration(10))
+                            .get_exclusive_tags()
+                            .contains(&&MediaExclusiveTag::TargetDuration(10))
                     );
-                    let mut iter = media.segments.iter();
+                    let segments = media.get_segments();
+                    assert_eq!(segments.len(), 3);
+                    let mut iter = segments.iter();
                     assert_eq!(*iter.next().unwrap().get_duration(), 9.009);
                     assert_eq!(*iter.next().unwrap().get_duration(), 9.009);
                     assert_eq!(*iter.next().unwrap().get_duration(), 3.003);
                     assert_eq!(
-                        media.exclusive_tags.last(),
-                        Some(&MediaExclusiveTag::EndList)
+                        media.get_exclusive_tags().last(),
+                        Some(&&MediaExclusiveTag::EndList)
                     );
                 };
             }
@@ -536,32 +539,33 @@ mod tests {
                 assert!(media.is_some());
 
                 if let Some(media) = media {
-                    println!("{}", media.segments.len());
-                    assert!(media.shared_tags.contains(&SharedTag::Version(7)));
-                    assert!(media.shared_tags.contains(&SharedTag::IndependentSegments));
-                    assert!(media.shared_tags.contains(&SharedTag::Start {
+                    println!("{}", media.get_segments().len());
+                    assert!(media.get_shared_tags().contains(&&SharedTag::Version(7)));
+                    assert!(media.get_shared_tags().contains(&&SharedTag::IndependentSegments));
+                    assert!(media.get_shared_tags().contains(&&SharedTag::Start {
                         time_offset: 0.0,
                         precise: true
                     }));
                     assert!(
                         media
-                            .exclusive_tags
-                            .contains(&MediaExclusiveTag::TargetDuration(8))
+                            .get_exclusive_tags()
+                            .contains(&&MediaExclusiveTag::TargetDuration(8))
                     );
                     assert!(
                         media
-                            .exclusive_tags
-                            .contains(&MediaExclusiveTag::MediaSequence(42))
+                            .get_exclusive_tags()
+                            .contains(&&MediaExclusiveTag::MediaSequence(42))
                     );
                     assert!(
                         media
-                            .exclusive_tags
-                            .contains(&MediaExclusiveTag::PlaylistType(PlayListType::Vod))
+                            .get_exclusive_tags()
+                            .contains(&&MediaExclusiveTag::PlaylistType(PlayListType::Vod))
                     );
-                    assert!(media.exclusive_tags.contains(&MediaExclusiveTag::EndList));
-                    let iter = media.segments.iter();
+                    assert!(media.get_exclusive_tags().contains(&&MediaExclusiveTag::EndList));
+                    let segments = media.get_segments();
+                    assert_eq!(segments.len(), 3);
 
-                    for (i, seg) in iter.enumerate() {
+                    for (i, seg) in segments.iter().enumerate() {
                         println!("{:?}", seg);
                         assert_eq!(*seg.get_duration(), 8.000);
                         assert_eq!(
@@ -578,8 +582,8 @@ mod tests {
                     }
 
                     assert_eq!(
-                        media.exclusive_tags.last(),
-                        Some(&MediaExclusiveTag::EndList)
+                        media.get_exclusive_tags().last(),
+                        Some(&&MediaExclusiveTag::EndList)
                     );
                 }
             }
@@ -598,6 +602,8 @@ mod tests {
         let original = std::fs::read_to_string(playlist_file).unwrap();
         
         let rendered = playlist.to_string();
+        println!("rendered: {}", rendered);
+        println!("playlist: {:?}", playlist);
         
         let reparsed = Playlist::from_str(&rendered).unwrap();
         

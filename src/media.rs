@@ -6,12 +6,7 @@ use std::{
 use crate::{
     attribute_list::{
         AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
-    },
-    error::{ParseError, ValidationError},
-    multivariant::MultivariantPlaylist,
-    playlist::{MediaMetadata, PlayListVariableDefinition, SharedTag},
-    segment::MediaSegment,
-    uri::decode,
+    }, error::{ParseError, ValidationError}, multivariant::{MultivariantPlaylist, MultivariantPlaylistItem}, playlist::{MediaMetadata, PlayListVariableDefinition, SharedTag}, segment::MediaSegment, uri::decode,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,14 +35,17 @@ pub enum MediaTag {
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct MediaPlaylist {
-    pub shared_tags: Vec<SharedTag>,
-    pub exclusive_tags: Vec<MediaExclusiveTag>,
-    pub(crate) segments: Vec<MediaSegment>,
+    pub items: Vec<MediaPlaylistItem>,
 
     pub variables: Vec<PlayListVariableDefinition>,
+}
 
-    pub(crate) media_metadata: Vec<MediaMetadata>,
-
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum MediaPlaylistItem {
+    MediaSegment(MediaSegment),
+    SharedTag(SharedTag),
+    ExclusiveTag(MediaExclusiveTag),
+    Metadata(MediaMetadata),
 }
 
 struct PlaylistContext<'a> {
@@ -90,40 +88,81 @@ impl FromStr for PlayListType {
 }
 
 impl MediaPlaylist {
-    fn get_segments(&self) -> &[MediaSegment] {
-        &self.segments
+    pub(crate) fn get_segments(&self) -> Vec<&MediaSegment> {
+        self.items
+            .iter()
+            .filter_map(|i| match i {
+                MediaPlaylistItem::MediaSegment(segment) => Some(segment),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
     }
 
-    fn add_segment(&mut self, segment: MediaSegment) {
-        self.segments.push(segment);
+    pub(crate) fn get_variables(&self) -> Vec<&PlayListVariableDefinition> {
+        self.variables.iter().collect::<Vec<_>>()
+    }
+
+    pub(crate) fn get_metadata(&self) -> Vec<&MediaMetadata> {
+        self.items
+            .iter()
+            .filter_map(|i| match i {
+                MediaPlaylistItem::Metadata(md) => Some(md),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    }
+
+    pub(crate) fn get_shared_tags(&self) -> Vec<&SharedTag> {
+        self.items
+            .iter()
+            .filter_map(|i| match i {
+                MediaPlaylistItem::SharedTag(tag) => Some(tag),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    }
+
+    pub(crate) fn get_exclusive_tags(&self) -> Vec<&MediaExclusiveTag> {
+        self.items
+            .iter()
+            .filter_map(|i| match i {
+                MediaPlaylistItem::ExclusiveTag(tag) => Some(tag),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    }
+
+    pub(crate) fn add_segment(&mut self, segment: MediaSegment) {
+        self.items.push(MediaPlaylistItem::MediaSegment(segment));
     }
 
     pub(crate) fn apply_shared_tag(&mut self, tag: SharedTag) -> Result<(), ParseError> {
         match tag {
             SharedTag::Version(_) => {
                 if self
-                    .shared_tags
+                    .items
                     .iter()
-                    .any(|t| matches!(t, SharedTag::Version(_)))
+                    .any(|t| matches!(t, MediaPlaylistItem::SharedTag(SharedTag::Version(_))))
                 {
                     return Err(ParseError::DuplicateTag(String::from("EXT-X-VERSION")));
                 }
 
-                self.shared_tags.push(tag);
+                self.items.push(MediaPlaylistItem::SharedTag(tag));
             }
 
             SharedTag::IndependentSegments => {
-                if self
-                    .shared_tags
-                    .iter()
-                    .any(|t| matches!(t, SharedTag::IndependentSegments))
-                {
+                if self.items.iter().any(|t| {
+                    matches!(
+                        t,
+                        MediaPlaylistItem::SharedTag(SharedTag::IndependentSegments)
+                    )
+                }) {
                     return Err(ParseError::DuplicateTag(String::from(
                         "EXT-X-INDEPENDENT-SEGMENTS",
                     )));
                 }
 
-                self.shared_tags.push(tag);
+                self.items.push(MediaPlaylistItem::SharedTag(tag));
             }
 
             SharedTag::Variable(v) => match v {
@@ -150,13 +189,13 @@ impl MediaPlaylist {
                 time_offset: _,
             } => {
                 if self
-                    .shared_tags
+                    .items
                     .iter()
-                    .any(|t| matches!(t, SharedTag::Start { .. }))
+                    .any(|t| matches!(t, MediaPlaylistItem::SharedTag(SharedTag::Start { .. })))
                 {
                     return Err(ParseError::DuplicateTag(String::from("EXT-X-START")));
                 }
-                self.shared_tags.push(tag);
+                self.items.push(MediaPlaylistItem::SharedTag(tag));
             }
         }
 
@@ -172,11 +211,12 @@ impl MediaPlaylist {
             | MediaExclusiveTag::PlaylistType(_)
             | MediaExclusiveTag::IFramesOnly
             | MediaExclusiveTag::PartInf { .. } => {
-                self.exclusive_tags.push(tag);
+                self.items.push(MediaPlaylistItem::ExclusiveTag(tag));
             }
             MediaExclusiveTag::ServerControl(attrs) => {
-                self.exclusive_tags
-                    .push(MediaExclusiveTag::ServerControl(attrs));
+                self.items.push(MediaPlaylistItem::ExclusiveTag(
+                    MediaExclusiveTag::ServerControl(attrs),
+                ));
             }
             _ => {
                 return Err(ParseError::InvalidLine(format!(
@@ -190,88 +230,79 @@ impl MediaPlaylist {
 
     fn validate(&mut self, ctx: &PlaylistContext) -> Result<(), ValidationError> {
         let master = ctx.parent_multivariant;
-        for tag in &self.shared_tags {
-            if let SharedTag::Variable(v) = tag {
-                match v {
-                    PlayListVariableDefinition::Import { .. } => match master {
-                        None => {
-                            return Err(ValidationError::ImportMediaWithoutMultivariant);
-                        }
-                        Some(master) => {
-                            if !master.shared_tags.iter().any(|t| match t {
-                                SharedTag::Variable(PlayListVariableDefinition::NameValue {
-                                    name,
-                                    ..
-                                }) => name == v.get_name(),
+        for item in &self.items {
+            if let MediaPlaylistItem::SharedTag(shared_tag) = item {
+                if let SharedTag::Variable(v) = shared_tag {
+                    match v {
+                        PlayListVariableDefinition::Import { .. } => match master {
+                            None => {
+                                return Err(ValidationError::ImportMediaWithoutMultivariant);
+                            }
+                            Some(master) => {
+                                if !master.items.iter().any(|t| match t {
+                                    MultivariantPlaylistItem::SharedTag(SharedTag::Variable(
+                                        PlayListVariableDefinition::NameValue { name, .. },
+                                    )) => name == v.get_name(),
+                                    _ => false,
+                                }) {
+                                    return Err(ValidationError::UnknownImportedVariable(
+                                        v.get_name().to_string(),
+                                    ));
+                                }
+                            }
+                        },
+                        PlayListVariableDefinition::NameValue { name: _, value: _ } => {}
+                        PlayListVariableDefinition::QueryParam { name, value: _ } => {
+                            let decoded = decode(ctx.uri)?;
 
-                                _ => false,
-                            }) {
+                            if !is_valid_quoted_string(&decoded) {
                                 return Err(ValidationError::UnknownImportedVariable(
-                                    v.get_name().to_string(),
+                                    decoded.to_string(),
                                 ));
                             }
-                        }
-                    },
-                    PlayListVariableDefinition::NameValue { name, value } => {}
-                    PlayListVariableDefinition::QueryParam { name, value: _ } => {
-                        let decoded = decode(ctx.uri)?;
 
-                        // verify the decoded URI contains the name as a query param
-                        if !is_valid_quoted_string(&decoded) || !decoded.contains(name) {
-                            return Err(ValidationError::UnknownImportedVariable(
-                                decoded.to_string(),
-                            ));
-                        }
-                        // we want to check for:::
-                        // eg: /path/to/playlist.m3u8?&xx=yy&tt=lola
-                        // so, first we split the uri by '?' to get the query params
-                        // then we split each param by '=' to get the name/value pair
-                        // then we check if the name matches the one we're looking for
-                        // if not, we return an error
-                        // in code:
-                        // url.split('?').last().unwrap_or("") returns "name=value&xx=yy&tt=lola"
-                        // then we split by '&' to get the individual params
-                        // and check if any of them match the name we're looking for
-                        let var = decoded
-                            .split('?')
-                            .next_back()
-                            .unwrap_or("")
-                            .split('&') // curr: "name=value"
-                            .find(|param| param.split('=').next() == Some(name));
-                        let value = var.unwrap().split('=').nth(1).unwrap_or("");
+                            // we want to check for:::
+                            // eg: /path/to/playlist.m3u8?&xx=yy&tt=lola
+                            // so, first we split the uri by '?' to get the query params
+                            // then we split each param by '=' to get the name/value pair
+                            // then we check if the name matches the one we're looking for
+                            // if not, we return an error
+                            // in code:
+                            // url.split('?').last().unwrap_or("") returns "name=value&xx=yy&tt=lola"
+                            // then we split by '&' to get the individual params
+                            // and check if any of them match the name we're looking for
+                            let param = decoded
+                                .split('?')
+                                .next_back()
+                                .unwrap_or("")
+                                .split('&')
+                                .find(|param| param.split('=').next() == Some(name.as_str()));
 
-                        if var.is_none() || value.is_empty() {
-                            return Err(ValidationError::UnknownImportedVariable(
-                                decoded.to_string(),
-                            ));
-                        }
+                            let Some(param) = param else {
+                                return Err(ValidationError::UnknownImportedVariable(
+                                    decoded.to_string(),
+                                ));
+                            };
 
-                        let var_def = self.variables.iter_mut()
-                            .find(|v| matches!(v, PlayListVariableDefinition::QueryParam { name: nom, value: _ } if var == Some(nom)));
+                            let value = param.split('=').nth(1).unwrap_or("");
+                            if value.is_empty() {
+                                return Err(ValidationError::UnknownImportedVariable(
+                                    decoded.to_string(),
+                                ));
+                            }
 
-                        if let Some(v) = var_def
-                            && let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v
-                        {
+                            if let Some(v) = self.variables.iter_mut().find(|v| {
+                            matches!(v, PlayListVariableDefinition::QueryParam { name: nom, .. } if nom == name)
+                        }) {
                             *v = PlayListVariableDefinition::QueryParam {
                                 name: name.to_string(),
                                 value: value.to_string(),
                             };
                         }
+                        }
                     }
                 }
             }
-        }
-
-        for tag in &self.exclusive_tags {
-            // ensure target duration is not exceeded by any segment
-            // if let MediaExclusiveTag::TargetDuration(d) = tag
-            //     && self
-            //         .segments
-            //         .iter()
-            //         .any(|s| s.get_duration().round() > *d as i64)
-            // {
-            //     return Err(ValidationError::InvalidMultivariantAttribute);
-            // }
         }
 
         Ok(())
@@ -454,28 +485,15 @@ impl TryFrom<AttributeList> for ServerControl {
 
 impl Display for MediaPlaylist {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for tag in &self.shared_tags {
-            writeln!(f, "{}", tag).ok();
-        }
-        for segment in &self.segments {
-            writeln!(f, "{}", segment).ok();
-        }
-        for tag in &self.exclusive_tags {
-            writeln!(f, "{}", tag).ok();
-        }
-        for md in &self.media_metadata {
-            writeln!(f, "{}", md).ok();
+        for item in &self.items {
+            match item {
+                MediaPlaylistItem::MediaSegment(segment) => write!(f, "{}", segment),
+                MediaPlaylistItem::SharedTag(tag) => writeln!(f, "{}", tag),
+                MediaPlaylistItem::ExclusiveTag(tag) => writeln!(f, "{}", tag),
+                MediaPlaylistItem::Metadata(md) => writeln!(f, "{}", md),
+            };
         }
         Ok(())
-    }
-}
-
-impl Display for MediaTag {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MediaTag::Shared(shared_tag) => write!(f, "{}", shared_tag),
-            MediaTag::Exclusive(media_exclusive_tag) => write!(f, "{}", media_exclusive_tag),
-        }
     }
 }
 
@@ -488,7 +506,7 @@ mod tests {
     fn test_media_playlist_apply_version() {
         let mut playlist = MediaPlaylist::default();
         playlist.apply_shared_tag(SharedTag::Version(3)).unwrap();
-        assert_eq!(playlist.shared_tags.len(), 1);
+        assert_eq!(playlist.get_shared_tags().len(), 1);
 
         assert!(playlist.apply_shared_tag(SharedTag::Version(4)).is_err());
     }
@@ -502,7 +520,7 @@ mod tests {
                 value: "VAL".to_string(),
             }))
             .unwrap();
-        assert_eq!(playlist.variables.len(), 1);
+        assert_eq!(playlist.get_variables().len(), 1);
 
         assert!(
             playlist
@@ -518,10 +536,10 @@ mod tests {
     fn test_media_playlist_validate_import_fail() {
         let mut playlist = MediaPlaylist::default();
         playlist
-            .shared_tags
-            .push(SharedTag::Variable(PlayListVariableDefinition::Import {
+            .items
+            .push(MediaPlaylistItem::SharedTag(SharedTag::Variable(PlayListVariableDefinition::Import {
                 name: "IMPORT_ME".to_string(),
-            }));
+            })));
 
         let ctx = PlaylistContext {
             uri: "playlist.m3u8",

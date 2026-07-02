@@ -44,12 +44,14 @@ impl Tag for Playlist {
             // version 6 and later it indicates the maximum segment duration rounded
             // to the nearest integer number of seconds.
             Playlist::Media(media_playlist) => {
+                let exclusive_tags = &media_playlist.get_exclusive_tags();
+
                 let has_iframes_only = media_playlist
-                    .exclusive_tags
-                    .contains(&MediaExclusiveTag::IFramesOnly);
+                    .get_exclusive_tags()
+                    .contains(&&MediaExclusiveTag::IFramesOnly);
 
                 let target_duration = media_playlist
-                    .exclusive_tags
+                    .get_exclusive_tags()
                     .iter()
                     .find_map(|x| {
                         if let MediaExclusiveTag::TargetDuration(d) = x {
@@ -59,7 +61,7 @@ impl Tag for Playlist {
                     })
                     .ok_or_else(|| ValidationError::MissingRequiredTag("#EXT-X-TARGETDURATION".into()))?;
                 
-                for seg in &media_playlist.segments {
+                for seg in &media_playlist.get_segments() {
                     let seg_duration = seg.get_duration();
 
                     // ensure target duration is not exceeded by any segment
@@ -131,7 +133,7 @@ impl Tag for Playlist {
                     require_version!(
                         version,
                         media_playlist
-                            .segments
+                            .get_segments()
                             .iter()
                             .any(|s| s.get_map().is_some()),
                         6,
@@ -141,7 +143,7 @@ impl Tag for Playlist {
                 }
 
                 if let Some(skip) = media_playlist
-                    .media_metadata
+                    .get_metadata()
                     .iter()
                     .find_map(|m| m.as_skip())
                 {
@@ -164,7 +166,7 @@ impl Tag for Playlist {
             }
 
             Playlist::Multivariant(multivariant_playlist) => {
-                multivariant_playlist.exclusive_tags.iter().try_for_each(|t| match t {
+                multivariant_playlist.get_exclusive_tags().iter().try_for_each(|t| match t {
                     MultivariantExclusiveTag::Media(media) => {
                         require_version!(
                             version,
@@ -202,7 +204,7 @@ impl Tag for Playlist {
                 })?;
                 // .map_err(|e| ValidationError::MissingRequiredTag(e.to_string()))?;
 
-                multivariant_playlist.shared_tags.iter().try_for_each(|t| match t {
+                multivariant_playlist.get_shared_tags().iter().try_for_each(|t| match t {
                     SharedTag::Variable(_) => {
                         require_version!(
                             version,
@@ -227,21 +229,21 @@ impl Tag for Playlist {
 impl Playlist {
     fn version(&self) -> Option<&u8> {
         match self {
-            Playlist::Media(p) => p.shared_tags.iter().find_map(|tag| match tag {
+            Playlist::Media(p) => p.get_shared_tags().iter().find_map(|tag| match tag {
                 SharedTag::Version(v) => Some(v),
                 _ => None,
             }),
-            Playlist::Multivariant(p) => p.shared_tags.iter().find_map(|tag| match tag {
+            Playlist::Multivariant(p) => p.get_shared_tags().iter().find_map(|tag| match tag {
                 SharedTag::Version(v) => Some(v),
                 _ => None,
             }),
         }
     }
 
-    fn get_shared_tags(&self) -> &[SharedTag] {
+    fn get_shared_tags(&self) -> Vec<&SharedTag> {
         match self {
-            Playlist::Media(p) => &p.shared_tags,
-            Playlist::Multivariant(p) => &p.shared_tags,
+            Playlist::Media(p) => p.get_shared_tags(),
+            Playlist::Multivariant(p) => p.get_shared_tags(),
         }
     }
 }
