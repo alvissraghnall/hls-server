@@ -1,4 +1,3 @@
-use core::fmt;
 use std::str::FromStr;
 
 use crate::{codecs::{DolbyVision, DolbyVisionBase, SupplementalCodecEntry, fourcc::Fourcc}, error::{CodecParseError, SupplementalCodecParseError}};
@@ -9,7 +8,7 @@ use super::{
 };
 
 impl AvcProfile {
-    /// RECONSTRUCT the profile variant from the raw (profile_idc, constraint_byte)
+    /// RECONSTRUCT the profile variant from the raw (`profile_idc`, `constraint_byte`)
     /// pair encoded in the codec string.  constraint flags are matched in
     /// precedence order per ITU-T H.264 Annex A.
     pub(crate) fn from_idc(p: u8, c: u8) -> Result<Self, CodecParseError> {

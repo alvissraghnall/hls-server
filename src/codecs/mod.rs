@@ -167,6 +167,7 @@ pub enum DolbyVisionBase {
 }
 
 impl DolbyVisionBase {
+    #[must_use]
     pub fn fourcc(self) -> Fourcc {
         match self {
             Self::Dvh1 => Fourcc::new(b"dvh1"),
@@ -177,6 +178,7 @@ impl DolbyVisionBase {
     }
 
     /// true if this variant is decodable by the underlying base codec
+    #[must_use]
     pub fn is_backward_compatible(self) -> bool {
         matches!(self, Self::Dvh1 | Self::Dvav)
     }
@@ -214,6 +216,7 @@ pub struct DolbyVision {
 }
 
 impl DolbyVision {
+    #[must_use]
     pub fn base_codec_fourcc(&self) -> Fourcc {
         match self.base {
             DolbyVisionBase::Dvh1 | DolbyVisionBase::Dvhe => Fourcc::new(b"hvc1"),
@@ -230,8 +233,9 @@ impl fmt::Display for DolbyVision {
 }
 
 impl AvcProfile {
-    /// (profile_idc_hex, constraint_byte_hex)
+    /// (`profile_idc_hex`, `constraint_byte_hex`)
     /// based on ITU-T H.264 Annex A
+    #[must_use]
     pub fn hex_codes(&self) -> (u8, u8) {
         match self {
             AvcProfile::ConstrainedBaseline => (0x42, 0x40), // 66, set1
@@ -303,7 +307,7 @@ impl fmt::Display for Codec {
             Codec::Mp4a(mp4a) => {
                 write!(f, "{}.{:02x}", Mp4aCodec::KIND, mp4a.oti)?;
                 if let Some(aot) = mp4a.audio_object_type {
-                    write!(f, ".{}", aot)?; // Decimal as per RFC 6381
+                    write!(f, ".{aot}")?; // Decimal as per RFC 6381
                 }
                 Ok(())
             }
@@ -348,7 +352,7 @@ impl fmt::Display for Codec {
 
                 if let Some((c_id, c_val)) = &hevc.constraint {
                     // constraint bytes must be hex (eg "L93.B0")
-                    write!(f, ".{}.{:08x}", c_id, c_val)?;
+                    write!(f, ".{c_id}.{c_val:08x}")?;
                 }
                 Ok(())
             }
@@ -402,18 +406,22 @@ impl std::fmt::Display for VpChromaSubsampling {
 pub struct CompatibilityBrands(Vec<Fourcc>);
 
 impl CompatibilityBrands {
+    #[must_use]
     pub fn new(brands: Vec<Fourcc>) -> Self {
         Self(brands)
     }
 
+    #[must_use]
     pub fn as_slice(&self) -> &[Fourcc] {
         &self.0
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -439,6 +447,7 @@ pub struct SupplementalCodecEntry {
 }
 
 impl SupplementalCodecEntry {
+    #[must_use]
     pub fn new(codec: Codec, brands: Vec<Fourcc>) -> Self {
         Self {
             codec,
@@ -446,6 +455,7 @@ impl SupplementalCodecEntry {
         }
     }
 
+    #[must_use]
     pub fn has_brands(&self) -> bool {
         !self.brands.is_empty()
     }

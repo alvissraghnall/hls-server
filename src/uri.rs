@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
-use crate::error::{ParseError, UriError, ValidationError};
+use crate::error::UriError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Uri {
@@ -31,7 +31,7 @@ impl Uri {
 
     pub fn parse(s: &str) -> Result<Self, UriError> {
         fn split_path_query_fragment(input: &str) -> (String, Option<String>, Option<String>) {
-            let path_end = input.find(|c| c == '?' || c == '#').unwrap_or(input.len());
+            let path_end = input.find(['?', '#']).unwrap_or(input.len());
             let path = input[..path_end].to_string();
             let rest = &input[path_end..];
 
@@ -68,7 +68,7 @@ impl Uri {
             let displayed_path = if path.is_empty() {
                 String::new()
             } else {
-                format!("/{}", path)
+                format!("/{path}")
             };
 
             return Ok(Uri {
@@ -80,9 +80,8 @@ impl Uri {
             });
         }
 
-        if let Some((scheme, rest)) = s.split_once(':') {
-            if rest.starts_with("//") {
-                let rest = &rest[2..];
+        if let Some((scheme, rest)) = s.split_once(':')
+            && let Some(rest) = rest.strip_prefix("//") {
                 let (authority, remainder) = rest.split_once('/').unwrap_or((rest, ""));
                 let authority = if authority.is_empty() {
                     None
@@ -93,7 +92,7 @@ impl Uri {
                 let displayed_path = if path.is_empty() {
                     String::new()
                 } else {
-                    format!("/{}", path)
+                    format!("/{path}")
                 };
 
                 return Ok(Uri {
@@ -104,7 +103,6 @@ impl Uri {
                     fragment,
                 });
             }
-        }
 
         let (path, query, fragment) = split_path_query_fragment(s);
         Ok(Uri {
@@ -184,14 +182,14 @@ impl Display for Uri {
             write!(f, "{}:", self.scheme)?;
         }
         if let Some(ref auth) = self.authority {
-            write!(f, "//{}", auth)?;
+            write!(f, "//{auth}")?;
         }
         write!(f, "{}", self.path)?;
         if let Some(ref query) = self.query {
-            write!(f, "?{}", query)?;
+            write!(f, "?{query}")?;
         }
         if let Some(ref fragment) = self.fragment {
-            write!(f, "#{}", fragment)?;
+            write!(f, "#{fragment}")?;
         }
         Ok(())
     }
@@ -205,9 +203,9 @@ impl FromStr for Uri {
     }
 }
 
-impl Into<Uri> for &str {
-    fn into(self) -> Uri {
-        Uri::parse(&self).unwrap()
+impl From<&str> for Uri {
+    fn from(val: &str) -> Self {
+        Uri::parse(val).unwrap()
     }
 }
 

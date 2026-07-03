@@ -1,7 +1,7 @@
 use crate::{
     error::ValidationError,
     media::MediaExclusiveTag,
-    multivariant::MultivariantExclusiveTag::{self, IFrameStreamInf},
+    multivariant::MultivariantExclusiveTag::{self},
     parser::Playlist,
     playlist::{PlayListVariableDefinition, SharedTag},
     segment::{DurationValue, Method},
@@ -44,7 +44,7 @@ impl Tag for Playlist {
             // version 6 and later it indicates the maximum segment duration rounded
             // to the nearest integer number of seconds.
             Playlist::Media(media_playlist) => {
-                let exclusive_tags = &media_playlist.get_exclusive_tags();
+                let _exclusive_tags = &media_playlist.get_exclusive_tags();
 
                 let has_iframes_only = media_playlist
                     .get_exclusive_tags()
@@ -170,7 +170,7 @@ impl Tag for Playlist {
                     MultivariantExclusiveTag::Media(media) => {
                         require_version!(
                             version,
-                            media.get_instream_id().map(|iid| iid.is_service()).unwrap_or(false),
+                            media.get_instream_id().is_some_and(super::multivariant::InStreamId::is_service),
                             7,
                             "A Multivariant Playlist MUST indicate an EXT-X-VERSION of 7 or higher if it \
                              contains a 'SERVICE' values for the INSTREAM-ID attribute of the EXT-X-MEDIA \
@@ -179,7 +179,7 @@ impl Tag for Playlist {
 
                         require_version!(
                             version,
-                            media.get_instream_id().map(|iid| !iid.is_cc()).unwrap_or(false),
+                            media.get_instream_id().is_some_and(|iid| !iid.is_cc()),
                             13,
                             "A Multivariant Playlist MUST indicate an EXT-X-VERSION of 13 or higher if it \
                              contains an EXT-X-MEDIA tag with INSTREAM-ID attribute for non CLOSED-CAPTIONS \

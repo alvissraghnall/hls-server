@@ -1,12 +1,12 @@
 use core::fmt;
-use std::{default, fmt::Display, str::FromStr};
+use std::{fmt::Display, str::FromStr};
 
 use crate::{
     attribute_list::{
-        AttributeList, AttributeValue, is_valid_cpc_label,
+        AttributeList,
         is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
     },
-    codecs::{self, Codec, SupplementalCodecEntry, fourcc::Fourcc, parse::parse_codecs_attr},
+    codecs::{Codec, SupplementalCodecEntry, fourcc::Fourcc, parse::parse_codecs_attr},
     error::{ParseError, SupplementalCodecParseError, ValidationError},
     playlist::{PlayListVariableDefinition, SharedTag},
     segment::{Key, Method},
@@ -248,8 +248,8 @@ impl SupplementalCodecs {
     /// `codecs` (the parsed CODECS attribute value). returns the first
     /// offending entry if a base layer is missing.
     ///
-    /// currently only enforced for DolbyVision entries since the implied
-    /// base-layer FourCC is well-defined.  generic/unknown enhancement codecs
+    /// currently only enforced for `DolbyVision` entries since the implied
+    /// base-layer `FourCC` is well-defined.  generic/unknown enhancement codecs
     /// are passed through without validation.
     pub fn validate_base_layers<'a>(
         &'a self,
@@ -339,7 +339,7 @@ impl MultivariantPlaylist {
         let shared_tags = self.get_shared_tags();
 
         match tag {
-            SharedTag::Version(v) => {
+            SharedTag::Version(_v) => {
                 if 
                     shared_tags
                     .iter()
@@ -423,14 +423,14 @@ impl MultivariantPlaylist {
                     PlayListVariableDefinition::Import { .. } => {
                         return Err(ValidationError::InvalidMultivariantAttribute);
                     }
-                    PlayListVariableDefinition::NameValue { name, value } => {}
+                    PlayListVariableDefinition::NameValue { name: _, value: _ } => {}
                     PlayListVariableDefinition::QueryParam { name, value: _ } => {
                         let decoded = decode(ctx.uri)?;
 
                         // verify the decoded URI contains the name as a query param
                         if !is_valid_quoted_string(&decoded) || !decoded.contains(name) {
                             return Err(ValidationError::UnknownImportedVariable(
-                                decoded.to_string(),
+                                decoded.clone(),
                             ));
                         }
                         // we want to check for:::
@@ -453,7 +453,7 @@ impl MultivariantPlaylist {
 
                         if var.is_none() || value.is_empty() {
                             return Err(ValidationError::UnknownImportedVariable(
-                                decoded.to_string(),
+                                decoded.clone(),
                             ));
                         }
 
@@ -464,13 +464,13 @@ impl MultivariantPlaylist {
                             && let PlayListVariableDefinition::QueryParam { name: _, value: _ } = v
                         {
                             *v = PlayListVariableDefinition::QueryParam {
-                                name: name.to_string(),
+                                name: name.clone(),
                                 value: value.to_string(),
                             };
                         }
                     }
                 }
-            };
+            }
         }
 
         Ok(())
@@ -536,7 +536,7 @@ pub(crate) fn parse_multivariant_exclusive_tag(
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "METHOD".into(),
                     value: "NONE".into(),
-                    expected: "METHOD attribute must not be NONE.".into(),
+                    expected: "METHOD attribute must not be NONE.",
                 });
             }
 
@@ -553,18 +553,18 @@ pub(crate) fn parse_multivariant_exclusive_tag(
                 .ok_or(ParseError::InvalidAttributeValue {
                     attribute: "URI".into(),
                     value: "NONE".into(),
-                    expected: "a valid URI".into(),
+                    expected: "a valid URI",
                 })?
                 .as_quoted_string()
                 .ok_or(ParseError::ExpectedQuotedString)
-                .map(|v| v.parse::<Uri>())??;
+                .map(str::parse::<Uri>)??;
 
             let pathway_id = attrs
                 .remove("PATHWAY-ID")
                 .map(|v| {
                     v.as_quoted_string()
                         .ok_or(ParseError::ExpectedQuotedString)
-                        .map(|x| x.to_string())
+                        .map(std::string::ToString::to_string)
                 })
                 .transpose()?;
 
@@ -620,7 +620,7 @@ impl TryFrom<AttributeList> for Media {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -629,7 +629,7 @@ impl TryFrom<AttributeList> for Media {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -647,7 +647,7 @@ impl TryFrom<AttributeList> for Media {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -668,7 +668,7 @@ impl TryFrom<AttributeList> for Media {
                             Err(ParseError::InvalidAttributeValue {
                                 attribute: "DEFAULT".into(),
                                 value: x.into(),
-                                expected: "YES or NO".into(),
+                                expected: "YES or NO",
                             })
                         }
                     })
@@ -693,7 +693,7 @@ impl TryFrom<AttributeList> for Media {
                             Err(ParseError::InvalidAttributeValue {
                                 attribute: "AUTOSELECT".into(),
                                 value: x.into(),
-                                expected: "YES or NO".into(),
+                                expected: "YES or NO",
                             })
                         }
                     })
@@ -718,7 +718,7 @@ impl TryFrom<AttributeList> for Media {
                             Err(ParseError::InvalidAttributeValue {
                                 attribute: "FORCED".into(),
                                 value: x.into(),
-                                expected: "YES or NO".into(),
+                                expected: "YES or NO",
                             })
                         }
                     })
@@ -737,7 +737,7 @@ impl TryFrom<AttributeList> for Media {
                                 ParseError::InvalidAttributeValue {
                                     attribute: "INSTREAM-ID".into(),
                                     value: x.into(),
-                                    expected: "a valid CC ID".into(),
+                                    expected: "a valid CC ID",
                                 }
                             })
                         } else if x.starts_with("SERVICE") {
@@ -745,21 +745,19 @@ impl TryFrom<AttributeList> for Media {
                                 ParseError::InvalidAttributeValue {
                                     attribute: "INSTREAM-ID".into(),
                                     value: x.into(),
-                                    expected: "a valid SERVICE ID".into(),
+                                    expected: "a valid SERVICE ID",
                                 }
                             })
+                        } else if !x.is_empty()
+                            && x.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
+                        {
+                            Ok(InStreamId::Other(x.to_string()))
                         } else {
-                            if !x.is_empty()
-                                && x.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
-                            {
-                                Ok(InStreamId::Other(x.to_string()))
-                            } else {
-                                Err(ParseError::InvalidAttributeValue {
-                                    attribute: "INSTREAM-ID".into(),
-                                    value: x.into(),
-                                    expected: "a valid INSTREAM-ID".into(),
-                                })
-                            }
+                            Err(ParseError::InvalidAttributeValue {
+                                attribute: "INSTREAM-ID".into(),
+                                value: x.into(),
+                                expected: "a valid INSTREAM-ID",
+                            })
                         }
                     })
             })
@@ -849,7 +847,7 @@ impl TryFrom<AttributeList> for Media {
 
                         let coding_identifiers = x
                             .next()
-                            .map(|s| s.split(',').map(|s| s.to_string()).collect::<Vec<_>>())
+                            .map(|s| s.split(',').map(std::string::ToString::to_string).collect::<Vec<_>>())
                             .unwrap_or_default();
 
                         let special_usage_identifiers = x
@@ -906,10 +904,10 @@ impl TryFrom<AttributeList> for Media {
         Ok(Media {
             media_type,
             uri,
-            assoc_language,
             group_id,
             language,
             name,
+            assoc_language,
             stable_rendition_id,
             default,
             autoselect,
@@ -1001,7 +999,7 @@ impl TryFrom<AttributeList> for StreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .and_then(|x| x.parse::<SupplementalCodecs>().map_err(|e| e.into()))
+                    .and_then(|x| x.parse::<SupplementalCodecs>().map_err(std::convert::Into::into))
             })
             .transpose()?
             .unwrap_or_default();
@@ -1038,7 +1036,7 @@ impl TryFrom<AttributeList> for StreamInf {
                         value: v.to_string(),
                         expected: &["TYPE-0", "TYPE-1", "NONE"],
                     })
-                    .and_then(|x| x.parse::<HdcpLevel>())
+                    .and_then(str::parse::<HdcpLevel>)
             })
             .transpose()?;
 
@@ -1066,10 +1064,10 @@ impl TryFrom<AttributeList> for StreamInf {
                                     .ok_or(ParseError::InvalidAttributeValue {
                                         attribute: "ALLOWED-CPC".into(),
                                         value: v.to_string(),
-                                        expected: "a valid label".into(),
+                                        expected: "a valid label",
                                     })?
                                     .split('/')
-                                    .map(|s| s.to_string())
+                                    .map(std::string::ToString::to_string)
                                     .collect::<Vec<_>>();
                                 Ok(AllowedCpcEntry { keyformat, labels })
                             })
@@ -1087,7 +1085,7 @@ impl TryFrom<AttributeList> for StreamInf {
                         value: v.to_string(),
                         expected: &["SDR", "HLG", "PQ"],
                     })
-                    .and_then(|x| x.parse::<VideoRange>())
+                    .and_then(str::parse::<VideoRange>)
             })
             .transpose()?
             .unwrap_or_default();
@@ -1099,7 +1097,7 @@ impl TryFrom<AttributeList> for StreamInf {
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|x| {
                         x.split(',')
-                            .map(|s| s.parse::<ViewPresentationEntry>())
+                            .map(str::parse::<ViewPresentationEntry>)
                             .collect::<Result<Vec<_>, ParseError>>()
                     })
             })
@@ -1110,7 +1108,7 @@ impl TryFrom<AttributeList> for StreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -1119,7 +1117,7 @@ impl TryFrom<AttributeList> for StreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -1128,7 +1126,7 @@ impl TryFrom<AttributeList> for StreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -1137,7 +1135,7 @@ impl TryFrom<AttributeList> for StreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -1152,7 +1150,7 @@ impl TryFrom<AttributeList> for StreamInf {
                         expected:
                             "either a quoted-string or an enumerated-string with the value NONE.",
                     })
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -1166,7 +1164,7 @@ impl TryFrom<AttributeList> for StreamInf {
                         expected:
                             "a valid quoted string representing thr PATHWAY-ID attribute value.",
                     })
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -1253,7 +1251,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .and_then(|x| x.parse::<SupplementalCodecs>().map_err(|e| e.into()))
+                    .and_then(|x| x.parse::<SupplementalCodecs>().map_err(std::convert::Into::into))
             })
             .transpose()?
             .unwrap_or_default();
@@ -1278,7 +1276,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                         value: v.to_string(),
                         expected: &["TYPE-0", "TYPE-1", "NONE"],
                     })
-                    .and_then(|x| x.parse::<HdcpLevel>())
+                    .and_then(str::parse::<HdcpLevel>)
             })
             .transpose()?;
 
@@ -1309,7 +1307,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                                         expected: "a valid label",
                                     })?
                                     .split('/')
-                                    .map(|s| s.to_string())
+                                    .map(std::string::ToString::to_string)
                                     .collect::<Vec<_>>();
                                 Ok(AllowedCpcEntry { keyformat, labels })
                             })
@@ -1327,7 +1325,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                         value: v.to_string(),
                         expected: &["SDR", "HLG", "PQ"],
                     })
-                    .and_then(|x| x.parse::<VideoRange>())
+                    .and_then(str::parse::<VideoRange>)
             })
             .transpose()?
             .unwrap_or_default();
@@ -1339,7 +1337,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                     .ok_or(ParseError::ExpectedQuotedString)
                     .and_then(|x| {
                         x.split(',')
-                            .map(|s| s.parse::<ViewPresentationEntry>())
+                            .map(str::parse::<ViewPresentationEntry>)
                             .collect::<Result<Vec<_>, ParseError>>()
                     })
             })
@@ -1350,7 +1348,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -1359,7 +1357,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -1373,7 +1371,7 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
                         expected:
                             "a valid quoted string representing thr PATHWAY-ID attribute value.",
                     })
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
@@ -1430,7 +1428,7 @@ impl FromStr for ViewPresentationEntry {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         s.split('/')
-            .map(|s| s.parse::<PresentationEntrySpecifier>())
+            .map(str::parse::<PresentationEntrySpecifier>)
             .collect::<Result<Vec<_>, ParseError>>()
             .map(ViewPresentationEntry)
     }
@@ -1482,7 +1480,7 @@ impl TryFrom<AttributeList> for SessionData {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?
             .ok_or(ParseError::MissingAttribute {
@@ -1497,7 +1495,7 @@ impl TryFrom<AttributeList> for SessionData {
                         value: v.to_string(),
                         expected: &["JSON", "RAW"],
                     })
-                    .and_then(|x| x.parse::<SessionDataFormat>())
+                    .and_then(str::parse::<SessionDataFormat>)
             })
             .transpose()?
             .unwrap_or_default();
@@ -1507,13 +1505,13 @@ impl TryFrom<AttributeList> for SessionData {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .map(|x| x.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .transpose()?;
 
         let has_uri = map.contains_key("URI");
         let has_value = map.contains_key("VALUE");
-        let count = (has_uri as u8) + (has_value as u8);
+        let count = u8::from(has_uri) + u8::from(has_value);
 
         match count {
             0 => {
@@ -1548,7 +1546,7 @@ impl TryFrom<AttributeList> for SessionData {
                 .map(|v| {
                     v.as_quoted_string()
                         .ok_or(ParseError::ExpectedQuotedString)
-                        .map(|x| x.to_string())
+                        .map(std::string::ToString::to_string)
                 })
                 .transpose()?
                 .ok_or_else(|| ParseError::MissingAttribute {
@@ -1563,9 +1561,9 @@ impl TryFrom<AttributeList> for SessionData {
 
         Ok(SessionData {
             data_id,
+            data_type,
             format,
             language,
-            data_type,
         })
     }
 }
@@ -1634,9 +1632,9 @@ impl Display for MediaType {
 impl Display for InStreamId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InStreamId::CC(id) => write!(f, "CC{}", id),
-            InStreamId::Service(id) => write!(f, "SERVICE{}", id),
-            InStreamId::Other(id) => write!(f, "{}", id),
+            InStreamId::CC(id) => write!(f, "CC{id}"),
+            InStreamId::Service(id) => write!(f, "SERVICE{id}"),
+            InStreamId::Other(id) => write!(f, "{id}"),
         }
     }
 }
@@ -1675,9 +1673,9 @@ impl Display for SpecialUsageIdentifier {
             SpecialUsageIdentifier::Binaural => write!(f, "BINAURAL"),
             SpecialUsageIdentifier::Immersive => write!(f, "IMMERSIVE"),
             SpecialUsageIdentifier::Downmix => write!(f, "DOWNMIX"),
-            SpecialUsageIdentifier::Bed(int) => write!(f, "BED-{}", int),
-            SpecialUsageIdentifier::Dof(int) => write!(f, "DOF-{}", int),
-            SpecialUsageIdentifier::Unknown(str) => write!(f, "{}", str),
+            SpecialUsageIdentifier::Bed(int) => write!(f, "BED-{int}"),
+            SpecialUsageIdentifier::Dof(int) => write!(f, "DOF-{int}"),
+            SpecialUsageIdentifier::Unknown(str) => write!(f, "{str}"),
         }
     }
 }
@@ -1715,18 +1713,18 @@ impl Display for Media {
         write!(f, "#EXT-X-MEDIA:")?;
         write!(f, "TYPE={}", self.media_type)?;
         if let Some(uri) = &self.uri {
-            write!(f, ",URI=\"{}\"", uri)?;
+            write!(f, ",URI=\"{uri}\"")?;
         }
         write!(f, ",GROUP-ID=\"{}\"", self.group_id)?;
         if let Some(language) = &self.language {
-            write!(f, ",LANGUAGE=\"{}\"", language)?;
+            write!(f, ",LANGUAGE=\"{language}\"")?;
         }
         if let Some(assoc_language) = &self.assoc_language {
-            write!(f, ",ASSOC-LANGUAGE=\"{}\"", assoc_language)?;
+            write!(f, ",ASSOC-LANGUAGE=\"{assoc_language}\"")?;
         }
         write!(f, ",NAME=\"{}\"", self.name)?;
         if let Some(stable_rendition_id) = &self.stable_rendition_id {
-            write!(f, ",STABLE-RENDITION-ID=\"{}\"", stable_rendition_id)?;
+            write!(f, ",STABLE-RENDITION-ID=\"{stable_rendition_id}\"")?;
         }
         if self.default {
             write!(f, ",DEFAULT=YES")?;
@@ -1738,13 +1736,13 @@ impl Display for Media {
             write!(f, ",FORCED=YES")?;
         }
         if let Some(instream_id) = &self.instream_id {
-            write!(f, ",INSTREAM-ID=\"{}\"", instream_id)?;
+            write!(f, ",INSTREAM-ID=\"{instream_id}\"")?;
         }
         if let Some(bit_depth) = &self.bit_depth {
-            write!(f, ",BIT-DEPTH={}", bit_depth)?;
+            write!(f, ",BIT-DEPTH={bit_depth}")?;
         }
         if let Some(sample_rate) = &self.sample_rate {
-            write!(f, ",SAMPLE-RATE={}", sample_rate)?;
+            write!(f, ",SAMPLE-RATE={sample_rate}")?;
         }
 
         // === CHARACTERISTICS start
@@ -1782,7 +1780,7 @@ impl Display for AllowedCpcEntry {
 
 impl std::fmt::Display for VideoRange {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", format!("{:?}", self).to_uppercase())
+        write!(f, "{}", format!("{self:?}").to_uppercase())
     }
 }
 
@@ -1894,7 +1892,7 @@ impl Display for ViewPresentationEntry {
             if i > 0 {
                 write!(f, "/")?;
             }
-            write!(f, "{}", entry)?;
+            write!(f, "{entry}")?;
         }
         Ok(())
     }
@@ -1903,8 +1901,8 @@ impl Display for ViewPresentationEntry {
 impl Display for PresentationEntrySpecifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PresentationEntrySpecifier::VideoChannelSpecifier(video) => write!(f, "{}", video),
-            PresentationEntrySpecifier::ProjectionSpecifier(proj) => write!(f, "{}", proj),
+            PresentationEntrySpecifier::VideoChannelSpecifier(video) => write!(f, "{video}"),
+            PresentationEntrySpecifier::ProjectionSpecifier(proj) => write!(f, "{proj}"),
         }
     }
 }
@@ -2024,7 +2022,7 @@ impl Display for IFrameStreamInf {
 
 impl Display for SessionDataFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", format!("{:?}", self).to_uppercase())
+        write!(f, "{}", format!("{self:?}").to_uppercase())
     }
 }
 
@@ -2035,7 +2033,7 @@ impl Display for SessionData {
         match &self.data_type {
             SessionDataType::Value(value) => write!(f, ",VALUE=\"{value}\"")?,
             SessionDataType::Uri(uri) => write!(f, ",URL=\"{uri}\"")?,
-        };
+        }
         write!(f, ",FORMAT={}", self.format)?;
         if let Some(language) = &self.language {
             write!(f, ",LANGUAGE={language}")?;
@@ -2048,13 +2046,13 @@ impl Display for SessionData {
 impl Display for MultivariantExclusiveTag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MultivariantExclusiveTag::Media(media) => write!(f, "{}", media)?,
-            MultivariantExclusiveTag::StreamInf(stream_inf) => write!(f, "{}", stream_inf)?,
+            MultivariantExclusiveTag::Media(media) => write!(f, "{media}")?,
+            MultivariantExclusiveTag::StreamInf(stream_inf) => write!(f, "{stream_inf}")?,
             MultivariantExclusiveTag::IFrameStreamInf(iframe_stream_inf) => {
-                write!(f, "{}", iframe_stream_inf)?
+                write!(f, "{iframe_stream_inf}")?;
             }
-            MultivariantExclusiveTag::SessionData(session_data) => write!(f, "{}", session_data)?,
-            MultivariantExclusiveTag::SessionKey(key) => write!(f, "{}", key)?,
+            MultivariantExclusiveTag::SessionData(session_data) => write!(f, "{session_data}")?,
+            MultivariantExclusiveTag::SessionKey(key) => write!(f, "{key}")?,
             MultivariantExclusiveTag::ContentSteering(content_steering) => {
                 write!(f, "#EXT-X-CONTENT-STEERING:")?;
                 write!(f, "SERVER-URI=\"{}\"", content_steering.0)?;
@@ -2062,7 +2060,7 @@ impl Display for MultivariantExclusiveTag {
                     write!(f, ",PATHWAY-ID=\"{pathway_id}\"")?;
                 }
             }
-        };
+        }
 
         Ok(())
     }
@@ -2073,8 +2071,8 @@ impl Display for MultivariantPlaylist {
         writeln!(f, "#EXTM3U")?;
         for item in &self.items {
             match item {
-                MultivariantPlaylistItem::SharedTag(tag) => writeln!(f, "{}", tag)?,
-                MultivariantPlaylistItem::ExclusiveTag(tag) => writeln!(f, "{}", tag)?
+                MultivariantPlaylistItem::SharedTag(tag) => writeln!(f, "{tag}")?,
+                MultivariantPlaylistItem::ExclusiveTag(tag) => writeln!(f, "{tag}")?
             }
         }
         Ok(())

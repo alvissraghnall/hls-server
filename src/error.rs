@@ -87,6 +87,8 @@ pub(crate) enum ValidationError {
     InvalidTargetDuration,
     MissingRequiredTag(String),
     InvalidSharedTag(SharedTag, String),
+    MissingPartInf,
+    InvalidServerControl(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,16 +136,16 @@ impl std::fmt::Display for ParseError {
             ),
             ParseError::BadOrder { expected, found } => write!(f, "Bad order: expected {expected}, found {found}"),            
             ParseError::CodecError(e) => write!(f, "codec: {e}"),
-            ParseError::InvalidLine(line) => write!(f, "Invalid line: {}", line),
+            ParseError::InvalidLine(line) => write!(f, "Invalid line: {line}"),
             ParseError::UnknownTag { tag, span } => {
                 write!(f, "Unknown tag: {} at {}:{}", tag, span.line, span.column)
             }
-            ParseError::DuplicateTag(tag) => write!(f, "Duplicate tag: {}", tag),
+            ParseError::DuplicateTag(tag) => write!(f, "Duplicate tag: {tag}"),
             ParseError::ExpectedQuotedString => write!(f, "Expected quoted string"),
-            ParseError::InvalidQuotedString { value, reason } => {
+            ParseError::InvalidQuotedString { value, reason: _ } => {
                 write!(f, "Invalid quoted string: {value}")
             }
-            ParseError::UnknownAttribute(attr) => write!(f, "Unknown attribute: {}", attr),
+            ParseError::UnknownAttribute(attr) => write!(f, "Unknown attribute: {attr}"),
             ParseError::InvalidAttributeValue {
                 attribute,
                 value,
@@ -162,7 +164,7 @@ impl std::fmt::Display for ParseError {
             }
             ParseError::NoPendingSegment => write!(f, "No pending segment"),
             ParseError::MissingAttribute { attribute } => {
-                write!(f, "Missing attribute: {}", attribute)
+                write!(f, "Missing attribute: {attribute}")
             }
             ParseError::InvalidEnumeratedString { value, expected } => write!(
                 f,
@@ -202,8 +204,10 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidUri => write!(f, "Invalid URI"),
             ValidationError::MissingRequiredTag(t) => write!(f, "Missing Required Tag: {t}"),
             ValidationError::InvalidSharedTag(shared, reason) => {
-                write!(f, "Invalid Shared Tag ({}): {reason}", shared.to_string())
+                write!(f, "Invalid Shared Tag ({shared}): {reason}")
             }
+            ValidationError::MissingPartInf => write!(f, "Missing PART-INF tag to complement EXT-X-PART on a media segment"), 
+            ValidationError::InvalidServerControl(reason) => write!(f, "Invalid server control: {reason}"),
         }
     }
 }
@@ -227,7 +231,7 @@ impl From<std::num::ParseIntError> for ParseError {
         ParseError::InvalidAttributeValue {
             attribute: "integer".into(),
             value: err.to_string(),
-            expected: "a valid integer".into(),
+            expected: "a valid integer",
         }
     }
 }
@@ -237,7 +241,7 @@ impl From<std::num::ParseFloatError> for ParseError {
         ParseError::InvalidAttributeValue {
             attribute: "float".into(),
             value: err.to_string(),
-            expected: "a valid float".into(),
+            expected: "a valid float",
         }
     }
 }
@@ -275,7 +279,7 @@ pub enum SupplementalCodecParseError {
     Empty,
     /// The codec portion of an entry failed to parse.
     Codec(CodecParseError),
-    /// A compatibility brand is not a valid 4-byte ASCII FourCC.
+    /// A compatibility brand is not a valid 4-byte ASCII `FourCC`.
     InvalidBrand(String),
     /// A specific comma-separated entry failed; carries its index.
     Entry {

@@ -1,29 +1,26 @@
 use std::{fmt::Display, str::FromStr};
 
-use itertools::Itertools;
-
 use crate::{
     error::{self, ParseError},
     media::{MediaExclusiveTag, MediaPlaylist},
     multivariant::{MultivariantExclusiveTag, MultivariantPlaylist},
     playlist::{MediaMetadata, SharedTag},
-    push_line::PushLine,
     read_write,
     segment::{MediaSegment, ParseSegmentState},
     uri::Uri,
 };
 
-static EXTINF: &'static str = "#EXTINF";
-static EXT_X_BYTERANGE: &'static str = "#EXT-X-BYTERANGE";
-static EXT_X_DISCONTINUITY: &'static str = "#EXT-X-DISCONTINUITY";
-static EXT_X_KEY: &'static str = "#EXT-X-KEY";
-static EXT_X_MAP: &'static str = "#EXT-X-MAP";
-static EXT_X_PROGRAM_DATE_TIME: &'static str = "#EXT-X-PROGRAM-DATE-TIME";
-static EXT_X_GAP: &'static str = "#EXT-X-GAP";
-static EXT_X_BITRATE: &'static str = "#EXT-X-BITRATE";
-static EXT_X_PART: &'static str = "#EXT-X-PART";
+static EXTINF: &str = "#EXTINF";
+static EXT_X_BYTERANGE: &str = "#EXT-X-BYTERANGE";
+static EXT_X_DISCONTINUITY: &str = "#EXT-X-DISCONTINUITY";
+static EXT_X_KEY: &str = "#EXT-X-KEY";
+static EXT_X_MAP: &str = "#EXT-X-MAP";
+static EXT_X_PROGRAM_DATE_TIME: &str = "#EXT-X-PROGRAM-DATE-TIME";
+static EXT_X_GAP: &str = "#EXT-X-GAP";
+static EXT_X_BITRATE: &str = "#EXT-X-BITRATE";
+static EXT_X_PART: &str = "#EXT-X-PART";
 
-static MEDIA_SEGMENT_TAGS: [&'static str; 9] = [
+static MEDIA_SEGMENT_TAGS: [&str; 9] = [
     EXTINF,
     EXT_X_BYTERANGE,
     EXT_X_DISCONTINUITY,
@@ -138,11 +135,10 @@ impl PlaylistParser {
         if line_number == 1 {
             if line == Playlist::EXTM3U {
                 return Ok(ParsedLine::M3U);
-            } else {
-                return Err(ParseError::InvalidLine(
-                    "First Line of every Media or Multivariant Playlist must be `#EXTM3U`".into(),
-                ));
             }
+            return Err(ParseError::InvalidLine(
+                "First Line of every Media or Multivariant Playlist must be `#EXTM3U`".into(),
+            ));
         }
 
         if line.is_empty() {
@@ -162,6 +158,9 @@ impl PlaylistParser {
         }
 
         if let Ok(tag) = line.parse::<MediaExclusiveTag>() {
+            if let MediaExclusiveTag::MediaSequence(ms) = tag {
+                segment_state.set_media_sequence(ms);
+            }
             return Ok(ParsedLine::MediaTag(tag));
         }
 
@@ -170,7 +169,7 @@ impl PlaylistParser {
         }
 
         if segment_state.accept(line).is_ok() {
-            println!("{:?}", line);
+            println!("{line:?}");
             return Ok(ParsedLine::MediaSegment);
         }
 
@@ -324,7 +323,7 @@ impl PlaylistParser {
                 let mut media_playlist = MediaPlaylist::default();
 
                 // id prefer to use itertools::zip_longest tbf
-                for tag in self.items.into_iter() {
+                for tag in self.items {
                     match tag {
                         PlaylistItem::SharedTag(shared) => {
                             media_playlist.apply_shared_tag(shared)?;
@@ -349,7 +348,6 @@ impl PlaylistParser {
 
                 for tag in self
                     .items
-                    .into_iter()
                 {
                     match tag {
                         PlaylistItem::MultivariantTag(multi_tag) => {
@@ -390,7 +388,7 @@ impl FromStr for Playlist {
             parser.consume(line, line_number, &mut parse_segment_state)?;
         }
     
-        Ok(parser.finish()?)
+        parser.finish()
     }
 }
 
@@ -464,10 +462,10 @@ impl Display for Playlist {
         writeln!(f, "{}", Self::EXTM3U)?;
         match self {
             Playlist::Media(media_playlist) => {
-                write!(f, "{}", media_playlist)
+                write!(f, "{media_playlist}")
             }
             Playlist::Multivariant(multivariant_playlist) => {
-                write!(f, "{}", multivariant_playlist)
+                write!(f, "{multivariant_playlist}")
             }
         }
     }
@@ -478,7 +476,7 @@ mod tests {
 
     use std::path::Path;
 
-    use crate::{media::PlayListType, segment, uri::Uri};
+    use crate::{media::PlayListType, uri::Uri};
 
     use super::*;
 

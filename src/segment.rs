@@ -1,12 +1,9 @@
-use std::{fmt::Display, ops::Deref, str::FromStr};
+use std::{fmt::Display, fs, str::FromStr};
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone as _};
 
 use crate::{
-    attribute_list::{AttributeList, parse_attribute_list},
-    error::ParseError,
-    segment::DurationValue::Int,
-    uri::Uri,
+    attribute_list::{AttributeList, parse_attribute_list}, error::ParseError, key, shared::Tag, uri::Uri,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,7 +12,7 @@ pub(crate) struct MediaSegment {
     byte_range: Option<ByteRange>, // not entirely sure about this just yet
     duration: DurationValue,       // trying not to use floats, but gats to
     title: Option<String>,
-    media_sequence: Option<u64>,
+    media_sequence: u64,
     discontinuity: bool,
     key: Option<Key>,
     map: Option<Map>,
@@ -68,6 +65,8 @@ pub(crate) struct ParseSegmentState {
     previous_byterange_end: Option<u64>,
     previous_byterange_uri: Option<String>,
     current_uri: Option<String>,
+    media_sequence: u64,
+    previous_media_sequence_number: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +89,7 @@ pub(crate) struct PendingSegment {
     part: Option<PartialSegment>,
     key: Option<Key>, // ????????????????
     map: Option<Map>,
+    media_sequence: u64,
 }
 
 impl MediaSegment {
@@ -112,7 +112,7 @@ impl MediaSegment {
             byte_range,
             duration,
             title,
-            media_sequence,
+            media_sequence: media_sequence.unwrap_or(0),
             discontinuity,
             key,
             map,
@@ -144,7 +144,11 @@ impl MediaSegment {
         &self.uri
     }
 
-    pub(crate) fn get_media_sequence(&self) -> Option<u64> {
+    pub(crate) fn get_part(&self) -> Option<&PartialSegment> {
+        self.part.as_ref()
+    }
+
+    pub(crate) fn get_media_sequence(&self) -> u64 {
         self.media_sequence
     }
 
@@ -170,6 +174,7 @@ impl PendingSegment {
             part: None,
             key: None,
             map: None,
+            media_sequence: 0,
         }
     }
 
@@ -243,7 +248,7 @@ impl PendingSegment {
                 let bitrate = tag["#EXT-X-BITRATE:".len()..]
                     .parse::<u64>()
                     .map_err(|_| ParseError::InvalidLine(line.to_string()))?;
-                self.bitrate = Some(bitrate)
+                self.bitrate = Some(bitrate);
             }
             tag if tag.starts_with("#EXT-X-PART:") => {
                 let attr_str = &tag["#EXT-X-PART:".len()..];
@@ -275,14 +280,24 @@ impl ParseSegmentState {
             previous_byterange_end: None,
             previous_byterange_uri: None,
             current_uri: None,
+            previous_media_sequence_number: None,
+            media_sequence: 0,
         }
     }
+
     pub(crate) fn accept(&mut self, line: &str) -> Result<(), ParseError> {
-        self.pending_segment
-            .parse(line)
+        self.pending_segment.media_sequence = self.media_sequence;
+        self.pending_segment.parse(line)
+    }
+
+    pub(crate) fn set_media_sequence(&mut self, media_sequence: u64) {
+        self.media_sequence = media_sequence;
     }
 
     pub(crate) fn finish_pending_segment(&mut self) -> PendingSegment {
+        self.previous_media_sequence_number = Some(self.media_sequence);
+        self.media_sequence += 1;
+        // self.pending_segment.reset_segment_scoped_fields();
         std::mem::replace(&mut self.pending_segment, PendingSegment::new())
     }
 }
@@ -336,8 +351,7 @@ impl TryFrom<AttributeList> for Key {
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "METHOD".into(),
                     value: method.into(),
-                    expected: "one of NONE, AES-128, SAMPLE-AES, SAMPLE-AES-CTR, AES-256-GCM"
-                        .into(),
+                    expected: "one of NONE, AES-128, SAMPLE-AES, SAMPLE-AES-CTR, AES-256-GCM",
                 });
             }
         };
@@ -375,7 +389,7 @@ impl TryFrom<AttributeList> for Key {
         Ok(Key {
             method: method_enum,
             uri: uri.into(),
-            iv: iv.map(|v| v.to_owned()),
+            iv: iv.map(std::borrow::ToOwned::to_owned),
             key_format,
             key_format_versions,
         })
@@ -399,7 +413,7 @@ impl TryFrom<AttributeList> for Map {
                 .ok_or(ParseError::InvalidAttributeValue {
                     attribute: "BYTERANGE".into(),
                     value: "NONE".into(),
-                    expected: "a quoted string in the format 'length@offset'".into(),
+                    expected: "a quoted string in the format 'length@offset'",
                 })?;
             let parts: Vec<&str> = br_str.split('@').collect();
 
@@ -407,7 +421,7 @@ impl TryFrom<AttributeList> for Map {
                 return Err(ParseError::InvalidAttributeValue {
                     attribute: "BYTERANGE".into(),
                     value: br_str.into(),
-                    expected: "a quoted string in the format 'length@offset'".into(),
+                    expected: "a quoted string in the format 'length@offset'",
                 });
             }
             let len = parts[0]
@@ -415,7 +429,7 @@ impl TryFrom<AttributeList> for Map {
                 .map_err(|_| ParseError::InvalidAttributeValue {
                     attribute: "BYTERANGE".into(),
                     value: parts[1].into(),
-                    expected: "a valid decimal integer length value".into(),
+                    expected: "a valid decimal integer length value",
                 })?;
 
             let offset =
@@ -424,7 +438,7 @@ impl TryFrom<AttributeList> for Map {
                     .map_err(|_| ParseError::InvalidAttributeValue {
                         attribute: "BYTERANGE".into(),
                         value: parts[1].into(),
-                        expected: "a valid decimal integer offset value".into(),
+                        expected: "a valid decimal integer offset value",
                     })?;
 
             Some(ByteRange {
@@ -449,20 +463,20 @@ impl TryFrom<AttributeList> for PartialSegment {
         let uri: Uri = value
             .get("URI")
             .and_then(|v| v.as_quoted_string())
-            .map(|v| v.into())
+            .map(std::convert::Into::into)
             .ok_or(ParseError::InvalidAttributeValue {
                 attribute: "URI".into(),
                 value: "NONE".into(),
-                expected: "a quoted string that is a valid uri".into(),
+                expected: "a quoted string that is a valid uri",
             })?;
 
         let duration = value
             .get("DURATION")
-            .and_then(|v| v.as_decimal_floating_point())
+            .and_then(super::attribute_list::AttributeValue::as_decimal_floating_point)
             .ok_or(ParseError::InvalidAttributeValue {
                 attribute: "DURATION".into(),
                 value: "NONE".into(),
-                expected: "a decimal floating point number".into(),
+                expected: "a decimal floating point number",
             })?;
 
         let independent = value.get("INDEPENDENT").and_then(|v| {
@@ -476,8 +490,7 @@ impl TryFrom<AttributeList> for PartialSegment {
         let gap = value
             .get("GAP")
             .and_then(|v| v.as_enumerated_string())
-            .map(|v| v == "YES")
-            .unwrap_or(false);
+            .is_some_and(|v| v == "YES");
 
         let byte_range = if let Some(br) = value.get("BYTERANGE") {
             let parts = br
@@ -491,7 +504,7 @@ impl TryFrom<AttributeList> for PartialSegment {
                 .map_err(|_| ParseError::InvalidAttributeValue {
                     attribute: "BYTERANGE".into(),
                     value: parts[0].into(),
-                    expected: "a valid decimal integer length value".into(),
+                    expected: "a valid decimal integer length value",
                 })?;
 
             let offset =
@@ -500,7 +513,7 @@ impl TryFrom<AttributeList> for PartialSegment {
                         ParseError::InvalidAttributeValue {
                             attribute: "BYTERANGE".into(),
                             value: parts[1].into(),
-                            expected: "a valid decimal integer offset value".into(),
+                            expected: "a valid decimal integer offset value",
                         }
                     })?)
                 } else {
@@ -513,11 +526,11 @@ impl TryFrom<AttributeList> for PartialSegment {
         };
 
         Ok(PartialSegment {
-            byte_range,
-            duration,
-            gap,
-            independent,
             uri,
+            duration,
+            independent,
+            byte_range,
+            gap,
         })
     }
 }
@@ -560,18 +573,17 @@ impl PartialOrd<u64> for DurationValue {
 impl DurationValue {
     pub(crate) fn round(&self) -> i64 {
         match self {
-            DurationValue::Int(n) => *n as i64,
+            DurationValue::Int(n) => i64::from(*n),
             DurationValue::Float(n) => n.round() as i64,
         }
     }
 
     pub(crate) fn round_u64(&self) -> u64 {
         match self {
-            DurationValue::Int(n) => *n as u64,
+            DurationValue::Int(n) => u64::from(*n),
             DurationValue::Float(n) => n.round() as u64,
         }
     }
-    
 }
 
 impl PartialEq<u32> for DurationValue {
@@ -611,7 +623,7 @@ impl TryFrom<PendingSegment> for MediaSegment {
             byte_range: value.byte_range,
             duration: value.duration.unwrap(),
             title: value.title,
-            media_sequence: None, // for now
+            media_sequence: value.media_sequence,
             discontinuity: value.discontinuity,
             gap: value.gap,
             key: value.key,
@@ -626,8 +638,8 @@ impl TryFrom<PendingSegment> for MediaSegment {
 impl Display for DurationValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DurationValue::Int(i) => write!(f, "#EXTINF:{}", i),
-            DurationValue::Float(fl) => write!(f, "#EXTINF:{}", fl),
+            DurationValue::Int(i) => write!(f, "#EXTINF:{i}"),
+            DurationValue::Float(fl) => write!(f, "#EXTINF:{fl}"),
         }
     }
 }
@@ -637,7 +649,7 @@ impl Display for ByteRange {
         // #EXT-X-BYTERANGE:<n>[@<o>]
         write!(f, "#EXT-X-BYTERANGE:{}", self.len)?;
         if let Some(offset) = self.offset {
-            write!(f, "@{}", offset)?;
+            write!(f, "@{offset}")?;
         }
         Ok(())
     }
@@ -663,7 +675,7 @@ impl Display for Key {
             write!(f, ",IV=0x{}", hex::encode(iv))?;
         }
         if let Some(key_format) = &self.key_format {
-            write!(f, ",KEYFORMAT=\"{}\"", key_format)?;
+            write!(f, ",KEYFORMAT=\"{key_format}\"")?;
         }
         for (i, version) in self.key_format_versions.iter().enumerate() {
             if i > 0 {
@@ -682,7 +694,7 @@ impl Display for Map {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "#EXT-X-MAP:URI=\"{}\"", self.uri)?;
         if let Some(byte_range) = &self.byte_range {
-            write!(f, ",BYTERANGE=\"{}\"", byte_range)?;
+            write!(f, ",BYTERANGE=\"{byte_range}\"")?;
         }
 
         Ok(())
@@ -701,7 +713,7 @@ impl Display for PartialSegment {
             }
         }
         if let Some(byte_range) = &self.byte_range {
-            write!(f, ",BYTERANGE=\"{}\"", byte_range)?;
+            write!(f, ",BYTERANGE=\"{byte_range}\"")?;
         }
         if self.gap {
             write!(f, ",GAP=\"YES\"")?;
@@ -728,14 +740,14 @@ impl Display for MediaSegment {
             media_sequence: _,
         } = self;
 
-        write!(f, "{}", duration)?;
+        write!(f, "{duration}")?;
         if let Some(title) = title {
-            write!(f, ",{}", title)?;
+            write!(f, ",{title}")?;
         }
         writeln!(f)?;
 
         if let Some(byte_range) = byte_range {
-            writeln!(f, "{}", byte_range)?;
+            writeln!(f, "{byte_range}")?;
         }
 
         if *discontinuity {
@@ -743,27 +755,70 @@ impl Display for MediaSegment {
         }
 
         if let Some(key) = key {
-            writeln!(f, "{}", key)?;
+            writeln!(f, "{key}")?;
         }
 
         if let Some(map) = map {
-            writeln!(f, "{}", map)?;
+            writeln!(f, "{map}")?;
         }
         if let Some(program_date_time) = program_date_time {
-            writeln!(f, "#EXT-X-PROGRAM-DATE-TIME:{}", program_date_time)?;
+            writeln!(f, "#EXT-X-PROGRAM-DATE-TIME:{program_date_time}")?;
         }
         if *gap {
             writeln!(f, "#EXT-X-GAP")?;
         }
         if let Some(bitrate) = bitrate {
-            writeln!(f, "#EXT-X-BITRATE:{}", bitrate)?;
+            writeln!(f, "#EXT-X-BITRATE:{bitrate}")?;
         }
         if let Some(part) = part {
-            writeln!(f, "{}", part)?;
+            writeln!(f, "{part}")?;
         }
 
-        writeln!(f, "{}", uri)?;
+        writeln!(f, "{uri}")?;
 
         Ok(())
+    }
+}
+
+impl MediaSegment {
+    pub fn decrypt(&self) -> Result<Vec<u8>, String> {
+        if let Some(key) = &self.key {
+            let key_bytes = {
+                if key.method != Method::Aes128 && key.method != Method::Aes256Gcm {
+                    return Err("Unsupported encryption method".to_string());
+                }
+                let key_data = fs::read(&key.uri.to_string()).map_err(|e| e.to_string())?;
+                key_data
+            };
+
+            let iv = if key.method == Method::Aes128 {
+                key.iv.clone().unwrap_or_else(|| {
+                    let seq_num = self.media_sequence;
+                    seq_num.to_be_bytes().to_vec()
+                })
+            } else {
+                Vec::with_capacity(0)
+            };
+
+            // if key.method == Method::Aes128 {
+            //     if key_bytes.len() != 16 {
+            //         return Err("Invalid AES-128 key length".to_string());
+            //     }
+            //     crate::key::decrypt::decrypt_aes_128(&key_bytes, &iv, &self.uri.to_string())
+            // } else if key.method == Method::Aes256Gcm {
+            //     if key_bytes.len() != 32 {
+            //         return Err("Invalid AES-256-GCM key length".to_string());
+            //     }
+            //     crate::key::decrypt::decrypt_aes_256_gcm(&key_bytes, &self.uri.to_string())
+            // } else {
+            //     unimplemented!()
+            // }
+
+            unimplemented!(
+                "Decryption logic is not fully implemented yet. This is a placeholder for the actual decryption process."
+            );
+        } else {
+            return Err("No encryption key found".to_string());
+        };
     }
 }

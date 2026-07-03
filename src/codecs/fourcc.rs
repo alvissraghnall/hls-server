@@ -17,7 +17,7 @@ impl From<Fourcc> for u32 {
 
 impl From<&[u8; 4]> for Fourcc {
     fn from(n: &[u8; 4]) -> Self {
-        Self(n[0] as u32 | (n[1] as u32) << 8 | (n[2] as u32) << 16 | (n[3] as u32) << 24)
+        Self(u32::from(n[0]) | u32::from(n[1]) << 8 | u32::from(n[2]) << 16 | u32::from(n[3]) << 24)
     }
 }
 
@@ -50,6 +50,7 @@ impl std::fmt::Debug for Fourcc {
 }
 
 impl Fourcc {
+    #[must_use]
     pub fn new(bytes: &[u8; 4]) -> Self {
         Self::from(bytes)
     }

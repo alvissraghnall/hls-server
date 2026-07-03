@@ -1,5 +1,5 @@
 #[cfg(feature = "aes")]
-mod encrypt {
+pub mod encrypt {
     use aes::cipher::{
         BlockModeEncrypt, Iv, Key as AesKey, KeyIvInit, block_padding::Pkcs7, consts::U16,
     };
@@ -39,7 +39,7 @@ mod encrypt {
             Aes128CbcEnc::new(&key, &iv)
         };
         Ok(Vec::from(
-            ct.encrypt_padded_b2b::<Pkcs7>(&plain_text, &mut buffer)?,
+            ct.encrypt_padded_b2b::<Pkcs7>(plain_text, &mut buffer)?,
         ))
     }
 
@@ -59,7 +59,7 @@ mod encrypt {
 }
 
 #[cfg(feature = "aes")]
-mod decrypt {
+pub mod decrypt {
     use aes::{
         Aes128,
         cipher::{BlockModeDecrypt, Iv, Key as AesKey, KeyIvInit, consts::U16},
@@ -72,7 +72,7 @@ mod decrypt {
     type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
     pub fn decrypt_aes_128(
-        mut cipher_text: &[u8],
+        cipher_text: &[u8],
         key: &[u8],
         iv: &[u8],
     ) -> Result<Vec<u8>, KeyError> {
@@ -82,7 +82,7 @@ mod decrypt {
         let mut buffer = vec![0u8; cipher_text.len() + 16];
 
         let pt = Aes128CbcDec::new(&key, &iv)
-            .decrypt_padded_b2b::<cbc::cipher::block_padding::Pkcs7>(&cipher_text, &mut buffer)
+            .decrypt_padded_b2b::<cbc::cipher::block_padding::Pkcs7>(cipher_text, &mut buffer)
             .map_err(|e| KeyError {
                 message: e.to_string(),
             })?;

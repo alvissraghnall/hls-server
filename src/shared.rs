@@ -1,7 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
 use crate::{
-    CRLF,
     attribute_list::{parse_attribute_list},
     error::{ParseError, ValidationError},
     playlist::{PlayListVariableDefinition, SharedTag},
@@ -31,12 +30,11 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
                 .and_then(|v| v.parse::<u8>().ok());
 
             if let Some(v) = version {
-                return Ok(SharedTag::Version(v));
+                Ok(SharedTag::Version(v))
             } else {
-                return Err(ParseError::InvalidLine(format!(
-                    "{} is not valid according to HLS spec.",
-                    line
-                )));
+                Err(ParseError::InvalidLine(format!(
+                    "{line} is not valid according to HLS spec."
+                )))
             }
         }
         "#EXT-X-INDEPENDENT-SEGMENTS" => Ok(SharedTag::IndependentSegments),
@@ -44,24 +42,22 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
             let s = s
                 .strip_prefix("#EXT-X-START:")
                 .ok_or(ParseError::InvalidLine(format!(
-                    "{} is not valid according to HLS spec.",
-                    line
+                    "{line} is not valid according to HLS spec."
                 )))?;
             let attrs = parse_attribute_list(s)?;
 
             let time_offset = attrs
                 .get("TIME-OFFSET")
-                .and_then(|v| v.as_signed_decimal_floating_point())
+                .and_then(super::attribute_list::AttributeValue::as_signed_decimal_floating_point)
                 .ok_or(ParseError::InvalidAttributeValue {
                     attribute: "TIME-OFFSET".into(),
                     value: "NONE".into(),
-                    expected: "a valid signed decimal floating point number".into(),
+                    expected: "a valid signed decimal floating point number",
                 })?;
             let precise = attrs
                 .get("PRECISE")
                 .and_then(|v| v.as_enumerated_string())
-                .map(|v| v == "YES")
-                .unwrap_or(false);
+                .is_some_and(|v| v == "YES");
             Ok(SharedTag::Start {
                 precise,
                 time_offset,
@@ -71,8 +67,7 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
             let attrs = s
                 .strip_prefix("#EXT-X-DEFINE:")
                 .ok_or(ParseError::InvalidLine(format!(
-                    "{} is not valid according to HLS spec.",
-                    line
+                    "{line} is not valid according to HLS spec."
                 )))?;
             let attrs = parse_attribute_list(attrs)?;
 
@@ -93,17 +88,16 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
 impl Display for SharedTag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SharedTag::Version(v) => write!(f, "#EXT-X-VERSION:{}", v),
+            SharedTag::Version(v) => write!(f, "#EXT-X-VERSION:{v}"),
             SharedTag::IndependentSegments => write!(f, "#EXT-X-INDEPENDENT-SEGMENTS"),
             SharedTag::Start {
                 precise,
                 time_offset,
             } => write!(
                 f,
-                "#EXT-X-START:PRECISE={},TIME-OFFSET={}",
-                precise, time_offset
+                "#EXT-X-START:PRECISE={precise},TIME-OFFSET={time_offset}"
             ),
-            SharedTag::Variable(var) => write!(f, "#EXT-X-DEFINE:{}", var),
+            SharedTag::Variable(var) => write!(f, "#EXT-X-DEFINE:{var}"),
         }
     }
 }
@@ -115,13 +109,13 @@ impl Tag for SharedTag {
             // tags independent of this one. ideally, we do this in
             // Playlist impl block. let's see.
             SharedTag::Version(_) => {}
-            SharedTag::Variable(play_list_variable_definition) => todo!(),
+            SharedTag::Variable(_play_list_variable_definition) => todo!(),
             SharedTag::IndependentSegments => todo!(),
             SharedTag::Start {
-                precise,
-                time_offset,
+                precise: _,
+                time_offset: _,
             } => todo!(),
-        };
+        }
 
         Ok(())
     }

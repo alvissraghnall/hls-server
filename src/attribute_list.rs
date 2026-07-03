@@ -5,7 +5,7 @@ use std::{
 };
 
 #[doc = r#"
-  An AttributeValue is one of the following:
+  An `AttributeValue` is one of the following:
 
   *  decimal-integer: an unquoted string of characters from the set
      [0-9] expressing an integer in base-10 arithmetic in the range
@@ -14,7 +14,7 @@ use std::{
 
   *  hexadecimal-sequence: an unquoted string of characters from the
      set [0-9] and [A-F] that is prefixed with 0x or 0X.  The maximum
-     length of a hexadecimal-sequence depends on its AttributeNames.
+     length of a hexadecimal-sequence depends on its `AttributeNames`.
 
   *  decimal-floating-point: an unquoted string of characters from the
      set [0-9] and '.' that expresses a non-negative floating-point
@@ -28,18 +28,18 @@ use std::{
      quotes (0x22).  The following characters MUST NOT appear in a
      quoted-string: line feed (0xA), carriage return (0xD), or double
      quote (0x22).  The string MUST be non-empty, unless specifically
-     allowed.  Quoted-string AttributeValues SHOULD be constructed so
+     allowed.  Quoted-string `AttributeValues` SHOULD be constructed so
      that byte-wise comparison is sufficient to test two quoted-string
-     AttributeValues for equality.  Note that this implies case-
+     `AttributeValues` for equality.  Note that this implies case-
      sensitive comparison.
 
   *  enumerated-string: an unquoted character string from a set that is
-     explicitly defined by the AttributeName.  An enumerated-string
+     explicitly defined by the `AttributeName`.  An enumerated-string
      will never contain double quotes ("), commas (,), or whitespace.
 
    *  enumerated-string-list: a quoted-string containing a comma-
       separated list of enumerated-strings from a set that is explicitly
-      defined by the AttributeName.  Each enumerated-string in the list
+      defined by the `AttributeName`.  Each enumerated-string in the list
       is a string consisting of characters valid in an enumerated-
       string.  The list SHOULD NOT repeat any enumerated-string.  To
       support forward compatibility, clients MUST ignore any
@@ -67,20 +67,20 @@ pub type AttributeList = HashMap<String, AttributeValue>;
 impl Display for AttributeValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SignedDecimalFloatingPoint(x) => write!(f, "{}", x),
-            Self::DecimalInteger(x) => write!(f, "{}", x),
-            Self::DecimalFloatingPoint(x) => write!(f, "{}", x),
+            Self::SignedDecimalFloatingPoint(x) => write!(f, "{x}"),
+            Self::DecimalInteger(x) => write!(f, "{x}"),
+            Self::DecimalFloatingPoint(x) => write!(f, "{x}"),
             Self::HexSequence(x) => write!(f, "0x{}", hex::encode(x)),
-            Self::QuotedString(x) => write!(f, "{}", x),
-            Self::EnumeratedString(x) => write!(f, "{}", x),
+            Self::QuotedString(x) => write!(f, "{x}"),
+            Self::EnumeratedString(x) => write!(f, "{x}"),
             // hmmmmmmmmmm [ `clone` ]
             Self::EnumeratedStringList(x) => write!(
                 f,
                 "{}",
                 x.iter().cloned().collect::<Vec<String>>().join(",")
             ),
-            Self::DecimalResolution { width, height } => write!(f, "{}x{}", width, height),
-            Self::XAttribute(name, value) => write!(f, "{}={}", name, value),
+            Self::DecimalResolution { width, height } => write!(f, "{width}x{height}"),
+            Self::XAttribute(name, value) => write!(f, "{name}={value}"),
         }
     }
 }
@@ -366,18 +366,15 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
             // i think i should improve this error handling
             // really sooon
             let parsed_qt_string = parse_quoted_string(value);
-            match parsed_qt_string {
-                Ok(v) => Ok(AttributeValue::QuotedString(v)),
-                Err(_) => {
-                    let parsed_enumerated_string = parse_enumerated_string(value)?;
-                    if parsed_enumerated_string != "NONE" {
-                        return Err(ParseError::InvalidEnumeratedString {
-                            value: parsed_enumerated_string,
-                            expected: &["NONE"],
-                        });
-                    }
-                    Ok(AttributeValue::EnumeratedString(parsed_enumerated_string))
+            if let Ok(v) = parsed_qt_string { Ok(AttributeValue::QuotedString(v)) } else {
+                let parsed_enumerated_string = parse_enumerated_string(value)?;
+                if parsed_enumerated_string != "NONE" {
+                    return Err(ParseError::InvalidEnumeratedString {
+                        value: parsed_enumerated_string,
+                        expected: &["NONE"],
+                    });
                 }
+                Ok(AttributeValue::EnumeratedString(parsed_enumerated_string))
             }
         }
         "PATHWAY-ID" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
@@ -397,7 +394,7 @@ pub(crate) fn parse_attribute_list(s: &str) -> Result<AttributeList, ParseError>
     let mut attrs = AttributeList::new();
     for (key, value) in s
         .split(',')
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
         .filter_map(|s| s.split_once('='))
     {
@@ -467,7 +464,7 @@ pub(crate) fn parse_enumerated_string(value: &str) -> Result<String, ParseError>
 pub(crate) fn parse_enumerated_string_list(value: &str) -> Result<HashSet<String>, ParseError> {
     let items: HashSet<String> = parse_quoted_string(value)?
         .split(',')
-        .map(|s| parse_enumerated_string(s))
+        .map(parse_enumerated_string)
         .collect::<Result<HashSet<String>, ParseError>>()?;
     Ok(items)
 }
