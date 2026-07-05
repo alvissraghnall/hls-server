@@ -36,7 +36,7 @@ pub enum MediaMetadata {
     RenditionReport(RenditionReport),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Skip {
     skipped_segments: u64,
     pub(crate) recently_removed_dateranges: Vec<String>,

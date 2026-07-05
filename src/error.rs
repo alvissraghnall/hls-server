@@ -89,6 +89,7 @@ pub(crate) enum ValidationError {
     InvalidSharedTag(SharedTag, String),
     MissingPartInf,
     InvalidServerControl(String),
+    InvalidMediaMetadata(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +209,7 @@ impl std::fmt::Display for ValidationError {
             }
             ValidationError::MissingPartInf => write!(f, "Missing PART-INF tag to complement EXT-X-PART on a media segment"), 
             ValidationError::InvalidServerControl(reason) => write!(f, "Invalid server control: {reason}"),
+            ValidationError::InvalidMediaMetadata(reason) => write!(f, "Invalid media metadata: {reason}"),
         }
     }
 }

@@ -3,7 +3,9 @@ use std::{fmt::Display, str::FromStr};
 use crate::{
     error::{self, ParseError},
     media::{MediaExclusiveTag, MediaPlaylist},
-    multivariant::{MultivariantExclusiveTag, MultivariantPlaylist},
+    multivariant::{
+        MultivariantExclusiveTag, MultivariantPlaylist, PendingStreamInf, StreamInfParserState,
+    },
     playlist::{MediaMetadata, SharedTag},
     read_write,
     segment::{MediaSegment, ParseSegmentState},
@@ -32,6 +34,7 @@ static MEDIA_SEGMENT_TAGS: [&str; 9] = [
     EXT_X_PART,
 ];
 
+#[derive(Debug, Clone, PartialEq)]
 enum ParsedLine {
     Empty,
     Comment,
@@ -48,6 +51,8 @@ enum ParsedLine {
     MultivariantTag(MultivariantExclusiveTag),
 
     MediaMetadata(MediaMetadata),
+
+    PendingStreamInf,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,29 +94,38 @@ enum PlaylistKind {
     Multivariant,
 }
 
+struct ParseContext {
+    parse_stream_inf_state: StreamInfParserState,
+    parse_segment_state: ParseSegmentState,
+    playlist_parser: PlaylistParser,
+}
+
 pub fn parse_file_into_playlist(
     path: impl AsRef<std::path::Path>,
 ) -> Result<Playlist, error::PlaylistReadError> {
     let content = read_write::read_from_file(path)?;
 
-    let mut parser = PlaylistParser::new();
-    let mut parse_segment_state = ParseSegmentState::new();
-
+    let mut parse_context = ParseContext::default();
+    
+    for (i, line) in content.lines().enumerate() {
+        println!("{:>3}: {}", i + 1, line);
+    }
+    
     let mut line_number = 0;
     for raw_line in content.lines() {
         line_number += 1;
         println!("line: {}", raw_line.trim());
 
-        let line = parser.parse_line_kind(raw_line, line_number, &mut parse_segment_state)?;
+        let line = parse_context.parse_line_kind(raw_line, line_number)?;
 
-        parser.consume(line, line_number, &mut parse_segment_state)?;
+        parse_context.consume(line, line_number)?;
     }
 
-    Ok(parser.finish()?)
+    Ok(parse_context.finish()?)
 }
 
 impl PlaylistParser {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             kind: PlaylistKind::Unknown,
             items: Vec::new(),
@@ -123,12 +137,11 @@ impl PlaylistParser {
     }
 }
 
-impl PlaylistParser {
+impl ParseContext {
     fn parse_line_kind(
         &mut self,
         line: &str,
         line_number: usize,
-        segment_state: &mut ParseSegmentState,
     ) -> Result<ParsedLine, ParseError> {
         // println!("line: {}", line);
 
@@ -159,7 +172,7 @@ impl PlaylistParser {
 
         if let Ok(tag) = line.parse::<MediaExclusiveTag>() {
             if let MediaExclusiveTag::MediaSequence(ms) = tag {
-                segment_state.set_media_sequence(ms);
+                self.parse_segment_state.set_media_sequence(ms);
             }
             return Ok(ParsedLine::MediaTag(tag));
         }
@@ -168,13 +181,18 @@ impl PlaylistParser {
             return Ok(ParsedLine::MultivariantTag(tag));
         }
 
-        if segment_state.accept(line).is_ok() {
-            println!("{line:?}");
+        if self.parse_segment_state.accept(line).is_ok() {
+            println!("media segment: {:?}", line);
             return Ok(ParsedLine::MediaSegment);
         }
 
         if let Ok(tag) = crate::playlist::MediaMetadata::parse_line(line, line_number) {
             return Ok(ParsedLine::MediaMetadata(tag));
+        }
+
+        if self.parse_stream_inf_state.accept_line(line).is_ok() {
+            println!("pending stream inf: {:?}", line);
+            return Ok(ParsedLine::PendingStreamInf);
         }
 
         Err(ParseError::UnknownTag {
@@ -186,17 +204,14 @@ impl PlaylistParser {
         })
     }
 
-    fn consume(
-        &mut self,
-        line: ParsedLine,
-        line_number: usize,
-        segment_state: &mut ParseSegmentState,
-    ) -> Result<(), ParseError> {
+    fn consume(&mut self, line: ParsedLine, line_number: usize) -> Result<(), ParseError> {
+        let line_cl = line.clone();
+        
         match line {
             ParsedLine::Empty | ParsedLine::Comment | ParsedLine::M3U => {}
 
             ParsedLine::Uri(uri) => {
-                self.consume_uri(uri, line_number, segment_state)?;
+                self.consume_uri(uri, line_number)?;
             }
 
             ParsedLine::SharedTag(tag) => {
@@ -209,6 +224,7 @@ impl PlaylistParser {
             }
 
             ParsedLine::MultivariantTag(tag) => {
+                println!("Tag: {:?}, line: {:?}, line_number: {}", tag, line_cl, line_number);
                 self.promote_to_multivariant()?;
                 self.consume_multivariant_tag(tag)?;
             }
@@ -218,16 +234,20 @@ impl PlaylistParser {
             }
 
             ParsedLine::MediaMetadata(tag) => {
-                self.items.push(PlaylistItem::Metadata(tag));
+                self.playlist_parser.items.push(PlaylistItem::Metadata(tag));
+            }
+
+            ParsedLine::PendingStreamInf => {
+                self.promote_to_multivariant()?;
             }
         }
         Ok(())
     }
 
     fn promote_to_multivariant(&mut self) -> Result<(), ParseError> {
-        match self.kind {
+        match self.playlist_parser.kind {
             PlaylistKind::Unknown => {
-                self.kind = PlaylistKind::Multivariant;
+                self.playlist_parser.kind = PlaylistKind::Multivariant;
                 Ok(())
             }
             PlaylistKind::Multivariant => Ok(()),
@@ -236,9 +256,9 @@ impl PlaylistParser {
     }
 
     fn promote_to_media(&mut self) -> Result<(), ParseError> {
-        match self.kind {
+        match self.playlist_parser.kind {
             PlaylistKind::Unknown => {
-                self.kind = PlaylistKind::Media;
+                self.playlist_parser.kind = PlaylistKind::Media;
                 Ok(())
             }
             PlaylistKind::Media => Ok(()),
@@ -247,13 +267,15 @@ impl PlaylistParser {
     }
 
     fn consume_shared_tag(&mut self, tag: SharedTag) {
-        self.items.push(PlaylistItem::SharedTag(tag));
+        self.playlist_parser
+            .items
+            .push(PlaylistItem::SharedTag(tag));
     }
 
     fn consume_media_tag(&mut self, tag: MediaExclusiveTag) -> Result<(), ParseError> {
-        self.validator.consume_media_tag(&tag)?;
+        self.playlist_parser.validator.consume_media_tag(&tag)?;
 
-        self.items.push(PlaylistItem::MediaTag(tag));
+        self.playlist_parser.items.push(PlaylistItem::MediaTag(tag));
 
         Ok(())
     }
@@ -262,14 +284,16 @@ impl PlaylistParser {
         &mut self,
         tag: MultivariantExclusiveTag,
     ) -> Result<(), ParseError> {
-        match self.kind {
+        match self.playlist_parser.kind {
             PlaylistKind::Unknown => {
                 // self.multivariant_tags.push(tag);
                 // self.items.push(PlaylistItem::MultivariantTag(tag));
                 Ok(())
             }
             PlaylistKind::Multivariant => {
-                self.items.push(PlaylistItem::MultivariantTag(tag));
+                self.playlist_parser
+                    .items
+                    .push(PlaylistItem::MultivariantTag(tag));
                 Ok(())
             }
 
@@ -277,53 +301,58 @@ impl PlaylistParser {
         }
     }
 
-    fn consume_uri(
-        &mut self,
-        uri: String,
-        line_number: usize,
-        segment_state: &mut ParseSegmentState,
-    ) -> Result<(), ParseError> {
-        match self.kind {
+    fn consume_uri(&mut self, uri: String, line_number: usize) -> Result<(), ParseError> {
+        let uri: Uri = uri.parse()?;
+        match self.playlist_parser.kind {
             PlaylistKind::Unknown => {
-                // A standalone URI lowk implies we're in a media playlist
-                self.promote_to_media()?;
-                let pseg = segment_state
-                    .finish_pending_segment();
-                let media_segment = pseg.build(uri.as_str().into())?;
-                self.items.push(PlaylistItem::Segment(media_segment));
+                // self.promote_to_media()?;
+                // let pseg = self.parse_segment_state.finish_pending_segment();
+                // let media_segment = pseg.build(uri.as_str().into())?;
+                // self.playlist_parser.items.push(PlaylistItem::Segment(media_segment));
 
-                self.items
-                    .push(PlaylistItem::Uri(uri.parse()?, line_number));
+                // self.playlist_parser.items
+                //     .push(PlaylistItem::Uri(uri.parse()?, line_number));
             }
             PlaylistKind::Media => {
-                let pseg = segment_state
-                    .finish_pending_segment();
-                let media_segment = pseg.build(uri.as_str().into())?;
-                self.items.push(PlaylistItem::Segment(media_segment));
+                let pseg = self.parse_segment_state.finish_pending_segment();
+                let media_segment = pseg.build(&uri)?;
+                self.playlist_parser
+                    .items
+                    .push(PlaylistItem::Segment(media_segment));
 
                 // media segment, i think we should store uri's and line number
                 // so we could enforce media segment validation - eg tags being for next n occurences
                 // of uri until we see that tag again..etc
-                self.items
-                    .push(PlaylistItem::Uri(uri.parse()?, line_number));
+                self.playlist_parser
+                    .items
+                    .push(PlaylistItem::Uri(uri, line_number));
             }
             PlaylistKind::Multivariant => {
                 // in multivariant playlists, a URI line follows a tag like
                 // #EXT-X-STREAM-INF. It points to a sub-playlist.
-                self.items
-                    .push(PlaylistItem::Uri(uri.parse()?, line_number));
+                // thinking about this atm!!!
+
+                let pstream_inf = self.parse_stream_inf_state.finish();
+                let stream_inf = pstream_inf.build(&uri);
+                self.playlist_parser
+                    .items
+                    .push(PlaylistItem::MultivariantTag(MultivariantExclusiveTag::StreamInf(stream_inf)));
+
+                self.playlist_parser
+                    .items
+                    .push(PlaylistItem::Uri(uri, line_number));
             }
         }
         Ok(())
     }
 
     fn finish(self) -> Result<Playlist, ParseError> {
-        match self.kind {
+        match self.playlist_parser.kind {
             PlaylistKind::Media => {
                 let mut media_playlist = MediaPlaylist::default();
 
                 // id prefer to use itertools::zip_longest tbf
-                for tag in self.items {
+                for tag in self.playlist_parser.items {
                     match tag {
                         PlaylistItem::SharedTag(shared) => {
                             media_playlist.apply_shared_tag(shared)?;
@@ -332,10 +361,14 @@ impl PlaylistParser {
                             media_playlist.apply_exclusive_tag(media)?;
                         }
                         PlaylistItem::Segment(seg) => {
-                            media_playlist.items.push(crate::media::MediaPlaylistItem::MediaSegment(seg));
+                            media_playlist
+                                .items
+                                .push(crate::media::MediaPlaylistItem::MediaSegment(seg));
                         }
                         PlaylistItem::Metadata(metadata) => {
-                            media_playlist.items.push(crate::media::MediaPlaylistItem::Metadata(metadata));
+                            media_playlist
+                                .items
+                                .push(crate::media::MediaPlaylistItem::Metadata(metadata));
                         }
                         _ => {}
                     }
@@ -346,9 +379,7 @@ impl PlaylistParser {
             PlaylistKind::Multivariant => {
                 let mut multivariant_playlist = MultivariantPlaylist::default();
 
-                for tag in self
-                    .items
-                {
+                for tag in self.playlist_parser.items {
                     match tag {
                         PlaylistItem::MultivariantTag(multi_tag) => {
                             multivariant_playlist.apply_exclusive_tag(multi_tag)?;
@@ -375,20 +406,20 @@ impl FromStr for Playlist {
     type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-    
-        let mut parser = PlaylistParser::new();
-        let mut parse_segment_state = ParseSegmentState::new();
-    
+        let mut parse_context = ParseContext::new();
+
         let mut line_number = 0;
         for raw_line in s.lines() {
+            println!("line: {raw_line:?}");
+
             line_number += 1;
-    
-            let line = parser.parse_line_kind(raw_line, line_number, &mut parse_segment_state)?;
-    
-            parser.consume(line, line_number, &mut parse_segment_state)?;
+
+            let line = parse_context.parse_line_kind(raw_line, line_number)?;
+
+            parse_context.consume(line, line_number)?;
         }
-    
-        parser.finish()
+
+        parse_context.finish()
     }
 }
 
@@ -471,10 +502,33 @@ impl Display for Playlist {
     }
 }
 
+impl Default for PlaylistParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ParseContext {
+    pub fn new() -> Self {
+        Self {
+            parse_stream_inf_state: StreamInfParserState::default(),
+            parse_segment_state: ParseSegmentState::default(),
+            playlist_parser: PlaylistParser::default(),
+        }
+    }
+}
+
+impl Default for ParseContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
-    use std::path::Path;
+    use pretty_assertions::assert_eq;
+    use std::{fs, path::Path};
 
     use crate::{media::PlayListType, uri::Uri};
 
@@ -539,7 +593,11 @@ mod tests {
                 if let Some(media) = media {
                     println!("{}", media.get_segments().len());
                     assert!(media.get_shared_tags().contains(&&SharedTag::Version(7)));
-                    assert!(media.get_shared_tags().contains(&&SharedTag::IndependentSegments));
+                    assert!(
+                        media
+                            .get_shared_tags()
+                            .contains(&&SharedTag::IndependentSegments)
+                    );
                     assert!(media.get_shared_tags().contains(&&SharedTag::Start {
                         time_offset: 0.0,
                         precise: true
@@ -559,7 +617,11 @@ mod tests {
                             .get_exclusive_tags()
                             .contains(&&MediaExclusiveTag::PlaylistType(PlayListType::Vod))
                     );
-                    assert!(media.get_exclusive_tags().contains(&&MediaExclusiveTag::EndList));
+                    assert!(
+                        media
+                            .get_exclusive_tags()
+                            .contains(&&MediaExclusiveTag::EndList)
+                    );
                     let segments = media.get_segments();
                     assert_eq!(segments.len(), 3);
 
@@ -591,21 +653,61 @@ mod tests {
 
     #[test]
     fn test_simple_back_and_forth() {
-        
         let playlist_file = Path::new(ROOT)
             .join("examples")
             .join("01-dead-simple-media.m3u8");
 
         let playlist = parse_file_into_playlist(playlist_file.clone()).unwrap();
         let original = std::fs::read_to_string(playlist_file).unwrap();
-        
+
         let rendered = playlist.to_string();
         println!("rendered: {}", rendered);
         println!("playlist: {:?}", playlist);
-        
+
         let reparsed = Playlist::from_str(&rendered).unwrap();
-        
+
         assert_eq!(original, rendered);
+        assert_eq!(playlist, reparsed);
+    }
+
+    #[test]
+    fn test_all_playlists() {
+        let examples_dir = Path::new(ROOT).join("examples");
+
+        let entries = fs::read_dir(&examples_dir).expect("Failed to read examples directory");
+
+        for (i, entry) in entries.enumerate() {
+            let entry = entry.expect("Failed to read directory entry");
+            let path = entry.path();
+
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "m3u8") {
+                println!("Testing file: {:?}", path);
+
+                let playlist = parse_file_into_playlist(&path).unwrap();
+                let rendered = playlist.to_string();
+                // fs::write(examples_dir.join(format!("rendered-{i}.m3u8")), &rendered).unwrap();
+                let reparsed = Playlist::from_str(&rendered).unwrap();
+
+                assert_eq!(playlist, reparsed);
+            }
+        }
+    }
+
+    #[test]
+    fn test_multivariant_complex() {
+        let playlist_file = Path::new(ROOT)
+            .join("examples")
+            .join("05-multivariant-complex.m3u8");
+
+        let playlist = parse_file_into_playlist(playlist_file.clone()).unwrap();
+        let original = std::fs::read_to_string(playlist_file).unwrap();
+
+        let rendered = playlist.to_string();
+        println!("rendered: {}", rendered);
+        println!("playlist: {:?}", playlist);
+
+        let reparsed = Playlist::from_str(&rendered).unwrap();
+        // assert_eq!(original, rendered);
         assert_eq!(playlist, reparsed);
     }
 }

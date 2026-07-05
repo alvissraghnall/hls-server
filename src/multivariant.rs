@@ -3,8 +3,7 @@ use std::{fmt::Display, str::FromStr};
 
 use crate::{
     attribute_list::{
-        AttributeList,
-        is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
+        AttributeList, is_valid_ext_x_define as is_valid_quoted_string, parse_attribute_list,
     },
     codecs::{Codec, SupplementalCodecEntry, fourcc::Fourcc, parse::parse_codecs_attr},
     error::{ParseError, SupplementalCodecParseError, ValidationError},
@@ -47,7 +46,7 @@ pub struct MultivariantPlaylist {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum MultivariantPlaylistItem {
     SharedTag(SharedTag),
-    ExclusiveTag(MultivariantExclusiveTag)
+    ExclusiveTag(MultivariantExclusiveTag),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,7 +78,7 @@ pub(crate) struct IFrameStreamInf {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct StreamInf {
+pub(crate) struct PendingStreamInf {
     bandwidth: u64,
     average_bandwidth: Option<u64>,
     score: Option<f64>,
@@ -106,6 +105,33 @@ pub(crate) struct ViewPresentationEntry(Vec<PresentationEntrySpecifier>);
 pub(crate) enum PresentationEntrySpecifier {
     VideoChannelSpecifier(VideoChannelSpecifier),
     ProjectionSpecifier(ProjectionSpecifier),
+}
+
+pub(crate) struct StreamInfParserState {
+    pending_stream_inf: PendingStreamInf,
+    uri: Option<Uri>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct StreamInf {
+    bandwidth: u64,
+    average_bandwidth: Option<u64>,
+    score: Option<f64>,
+    codecs: Vec<Codec>,
+    supplemental_codecs: SupplementalCodecs,
+    resolution: Option<(u64, u64)>,
+    frame_rate: Option<f64>,
+    hdcp_level: Option<HdcpLevel>,
+    allowed_cpc: Vec<AllowedCpcEntry>,
+    video_range: VideoRange,
+    req_video_layout: Option<Vec<ViewPresentationEntry>>,
+    stable_variant_id: Option<String>,
+    audio: Option<String>,
+    video: Option<String>,
+    subtitles: Option<String>,
+    closed_captions: Option<String>,
+    pathway_id: Option<String>,
+    uri: Uri,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -315,7 +341,7 @@ impl MediaType {
 }
 
 impl MultivariantPlaylist {
-    pub(crate) fn get_shared_tags (&self) -> Vec<&SharedTag> {
+    pub(crate) fn get_shared_tags(&self) -> Vec<&SharedTag> {
         self.items
             .iter()
             .filter_map(|i| match i {
@@ -340,8 +366,7 @@ impl MultivariantPlaylist {
 
         match tag {
             SharedTag::Version(_v) => {
-                if 
-                    shared_tags
+                if shared_tags
                     .iter()
                     .any(|t| matches!(t, SharedTag::Version(_)))
                 {
@@ -392,11 +417,12 @@ impl MultivariantPlaylist {
                 precise: _,
                 time_offset: _,
             } => {
-                if self
-                    .items
-                    .iter()
-                    .any(|t| matches!(t, MultivariantPlaylistItem::SharedTag(SharedTag::Start { precise: _, .. })))
-                {
+                if self.items.iter().any(|t| {
+                    matches!(
+                        t,
+                        MultivariantPlaylistItem::SharedTag(SharedTag::Start { precise: _, .. })
+                    )
+                }) {
                     return Err(ParseError::DuplicateTag(String::from(
                         "EXT-X-START:PRECISE",
                     )));
@@ -429,9 +455,7 @@ impl MultivariantPlaylist {
 
                         // verify the decoded URI contains the name as a query param
                         if !is_valid_quoted_string(&decoded) || !decoded.contains(name) {
-                            return Err(ValidationError::UnknownImportedVariable(
-                                decoded.clone(),
-                            ));
+                            return Err(ValidationError::UnknownImportedVariable(decoded.clone()));
                         }
                         // we want to check for:::
                         // eg: /path/to/playlist.m3u8?&xx=yy&tt=lola
@@ -452,9 +476,7 @@ impl MultivariantPlaylist {
                         let value = var.unwrap().split('=').nth(1).unwrap_or("");
 
                         if var.is_none() || value.is_empty() {
-                            return Err(ValidationError::UnknownImportedVariable(
-                                decoded.clone(),
-                            ));
+                            return Err(ValidationError::UnknownImportedVariable(decoded.clone()));
                         }
 
                         let var_def = self.variables.iter_mut()
@@ -498,17 +520,6 @@ pub(crate) fn parse_multivariant_exclusive_tag(
             Ok(MultivariantExclusiveTag::Media(media))
         }
 
-        // a <URI> gotta come in the very next line after this
-        // wonder how we'd parse tthat, yeah?
-        tag if tag.starts_with("#EXT-X-STREAM-INF:") => {
-            let attr_str = &tag["#EXT-X-STREAM-INF:".len()..];
-            let attrs = parse_attribute_list(attr_str)?;
-
-            let stream_inf = StreamInf::try_from(attrs)?;
-
-            Ok(MultivariantExclusiveTag::StreamInf(stream_inf))
-        }
-
         tag if tag.starts_with("#EXT-X-I-FRAME-STREAM-INF:") => {
             let attr_str = &tag["#EXT-X-I-FRAME-STREAM-INF:".len()..];
             let attrs = parse_attribute_list(attr_str)?;
@@ -549,9 +560,9 @@ pub(crate) fn parse_multivariant_exclusive_tag(
             let mut attrs = parse_attribute_list(attr_str)?;
 
             let uri = attrs
-                .remove("URI")
+                .remove("SERVER-URI")
                 .ok_or(ParseError::InvalidAttributeValue {
-                    attribute: "URI".into(),
+                    attribute: "SERVER-URI".into(),
                     value: "NONE".into(),
                     expected: "a valid URI",
                 })?
@@ -847,7 +858,11 @@ impl TryFrom<AttributeList> for Media {
 
                         let coding_identifiers = x
                             .next()
-                            .map(|s| s.split(',').map(std::string::ToString::to_string).collect::<Vec<_>>())
+                            .map(|s| {
+                                s.split(',')
+                                    .map(std::string::ToString::to_string)
+                                    .collect::<Vec<_>>()
+                            })
                             .unwrap_or_default();
 
                         let special_usage_identifiers = x
@@ -938,7 +953,7 @@ impl FromStr for MediaType {
     }
 }
 
-impl TryFrom<AttributeList> for StreamInf {
+impl TryFrom<AttributeList> for PendingStreamInf {
     type Error = ParseError;
 
     fn try_from(mut map: AttributeList) -> Result<Self, Self::Error> {
@@ -999,7 +1014,10 @@ impl TryFrom<AttributeList> for StreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .and_then(|x| x.parse::<SupplementalCodecs>().map_err(std::convert::Into::into))
+                    .and_then(|x| {
+                        x.parse::<SupplementalCodecs>()
+                            .map_err(std::convert::Into::into)
+                    })
             })
             .transpose()?
             .unwrap_or_default();
@@ -1168,7 +1186,7 @@ impl TryFrom<AttributeList> for StreamInf {
             })
             .transpose()?;
 
-        Ok(StreamInf {
+        Ok(PendingStreamInf {
             bandwidth,
             average_bandwidth,
             score,
@@ -1251,7 +1269,10 @@ impl TryFrom<AttributeList> for IFrameStreamInf {
             .map(|v| {
                 v.as_quoted_string()
                     .ok_or(ParseError::ExpectedQuotedString)
-                    .and_then(|x| x.parse::<SupplementalCodecs>().map_err(std::convert::Into::into))
+                    .and_then(|x| {
+                        x.parse::<SupplementalCodecs>()
+                            .map_err(std::convert::Into::into)
+                    })
             })
             .transpose()?
             .unwrap_or_default();
@@ -1746,15 +1767,16 @@ impl Display for Media {
         }
 
         // === CHARACTERISTICS start
-        write!(f, ",CHARACTERISTICS=\"")?;
-
-        for (i, characteristic) in self.characteristics.iter().enumerate() {
-            if i > 0 {
-                write!(f, ",")?;
+        if !self.characteristics.is_empty() {
+            write!(f, ",CHARACTERISTICS=\"")?;
+            for (i, characteristic) in self.characteristics.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{characteristic}")?;
             }
-            write!(f, "{characteristic}")?;
+            write!(f, "\"")?;
         }
-        write!(f, "\"")?;
         // === CHARACTERISTICS end
 
         if let Some(channels) = &self.channels {
@@ -1778,13 +1800,13 @@ impl Display for AllowedCpcEntry {
     }
 }
 
-impl std::fmt::Display for VideoRange {
+impl Display for VideoRange {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", format!("{self:?}").to_uppercase())
     }
 }
 
-impl Display for StreamInf {
+impl Display for PendingStreamInf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "#EXT-X-STREAM-INF:")?;
         write!(f, "BANDWIDTH={}", self.bandwidth)?;
@@ -1799,25 +1821,29 @@ impl Display for StreamInf {
         }
 
         // === CODECS start ===
-        write!(f, ",CODECS=\"")?;
-        for (i, codec) in self.codecs.iter().enumerate() {
-            if i > 0 {
-                write!(f, ",")?;
+        if !self.codecs.is_empty() {
+            write!(f, ",CODECS=\"")?;
+            for (i, codec) in self.codecs.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{codec}")?;
             }
-            write!(f, "{codec}")?;
+            write!(f, "\"")?;
         }
-        write!(f, "\"")?;
         // === CODECS end ===
 
         // === SUPPLEMENTAL-CODECS start ===
-        write!(f, ",SUPPLEMENTAL-CODECS=\"")?;
-        for (i, codec) in self.supplemental_codecs.iter().enumerate() {
-            if i > 0 {
-                write!(f, ",")?;
+        if !self.supplemental_codecs.is_empty() {
+            write!(f, ",SUPPLEMENTAL-CODECS=\"")?;
+            for (i, codec) in self.supplemental_codecs.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{codec}")?;
             }
-            write!(f, "{codec}")?;
+            write!(f, "\"")?;
         }
-        write!(f, "\"")?;
         // === SUPPLEMENTAL-CODECS end ===
 
         if let Some(frame_rate) = &self.frame_rate {
@@ -1829,14 +1855,16 @@ impl Display for StreamInf {
         }
 
         // === ALLOWED-CPC start
-        write!(f, ",ALLOWED-CPC=\"")?;
-        for (i, allowed_cpc_entry) in self.allowed_cpc.iter().enumerate() {
-            if i > 0 {
-                write!(f, ",")?;
+        if !self.allowed_cpc.is_empty() {
+            write!(f, ",ALLOWED-CPC=\"")?;
+            for (i, allowed_cpc_entry) in self.allowed_cpc.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{allowed_cpc_entry}")?;
             }
-            write!(f, "{allowed_cpc_entry}")?;
+            write!(f, "\"")?;
         }
-        write!(f, "\"")?;
         // === ALLOWED-CPC end
 
         write!(f, ",VIDEO-RANGE={}", self.video_range)?;
@@ -1885,6 +1913,119 @@ impl Display for StreamInf {
         Ok(())
     }
 }
+
+
+impl Display for StreamInf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#EXT-X-STREAM-INF:")?;
+        write!(f, "BANDWIDTH={}", self.bandwidth)?;
+        if let Some(resolution) = &self.resolution {
+            write!(f, ",RESOLUTION={}x{}", resolution.0, resolution.1)?;
+        }
+        if let Some(avg_bandwidth) = &self.average_bandwidth {
+            write!(f, ",AVERAGE-BANDWIDTH={avg_bandwidth}")?;
+        }
+        if let Some(score) = &self.score {
+            write!(f, ",SCORE={score}")?;
+        }
+
+        // === CODECS start ===
+        if !self.codecs.is_empty() {
+            write!(f, ",CODECS=\"")?;
+            for (i, codec) in self.codecs.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{codec}")?;
+            }
+            write!(f, "\"")?;
+        }
+        // === CODECS end ===
+
+        // === SUPPLEMENTAL-CODECS start ===
+        if !self.supplemental_codecs.is_empty() {
+            write!(f, ",SUPPLEMENTAL-CODECS=\"")?;
+            for (i, codec) in self.supplemental_codecs.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{codec}")?;
+            }
+            write!(f, "\"")?;
+        }
+        // === SUPPLEMENTAL-CODECS end ===
+
+        if let Some(frame_rate) = &self.frame_rate {
+            write!(f, ",FRAME-RATE={frame_rate}")?;
+        }
+
+        if let Some(hdcp_level) = &self.hdcp_level {
+            write!(f, ",HDCP-LEVEL={hdcp_level}")?;
+        }
+
+        // === ALLOWED-CPC start
+        if !self.allowed_cpc.is_empty() {
+            write!(f, ",ALLOWED-CPC=\"")?;
+            for (i, allowed_cpc_entry) in self.allowed_cpc.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{allowed_cpc_entry}")?;
+            }
+            write!(f, "\"")?;
+        }
+        // === ALLOWED-CPC end
+
+        write!(f, ",VIDEO-RANGE={}", self.video_range)?;
+
+        // === REQ-VIDEO-LAYOUT start
+        if let Some(req_video_layout) = &self.req_video_layout {
+            write!(f, ",REQ-VIDEO-LAYOUT=\"")?;
+            for (i, video_layout) in req_video_layout.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{video_layout}")?;
+            }
+            write!(f, "\"")?;
+        }
+        // === REQ-VIDEO-LAYOUT end
+
+        if let Some(stable_variant_id) = &self.stable_variant_id {
+            write!(f, ",STABLE-VARIANT-ID=\"{stable_variant_id}\"")?;
+        }
+
+        if let Some(audio) = &self.audio {
+            write!(f, ",AUDIO=\"{audio}\"")?;
+        }
+
+        if let Some(video) = &self.video {
+            write!(f, ",VIDEO=\"{video}\"")?;
+        }
+
+        if let Some(subtitles) = &self.subtitles {
+            write!(f, ",SUBTITLES=\"{subtitles}\"")?;
+        }
+
+        if let Some(closed_captions) = &self.closed_captions {
+            if closed_captions == "NONE" {
+                write!(f, ",CLOSED-CAPTIONS={closed_captions}")?;
+            } else {
+                write!(f, ",CLOSED-CAPTIONS=\"{closed_captions}\"")?;
+            }
+        }
+
+        if let Some(pathway_id) = &self.pathway_id {
+            write!(f, ",PATHWAY-ID=\"{pathway_id}\"")?;
+        }
+
+        writeln!(f, "")?;
+        write!(f, "{}", self.uri)?;
+
+        Ok(())
+    }
+}
+
 
 impl Display for ViewPresentationEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1953,25 +2094,29 @@ impl Display for IFrameStreamInf {
         }
 
         // === CODECS start ===
-        write!(f, ",CODECS=\"")?;
-        for (i, codec) in self.codecs.iter().enumerate() {
-            if i > 0 {
-                write!(f, ",")?;
+        if !self.codecs.is_empty() {
+            write!(f, ",CODECS=\"")?;
+            for (i, codec) in self.codecs.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{codec}")?;
             }
-            write!(f, "{codec}")?;
+            write!(f, "\"")?;
         }
-        write!(f, "\"")?;
         // === CODECS end ===
 
         // === SUPPLEMENTAL-CODECS start ===
-        write!(f, ",SUPPLEMENTAL-CODECS=\"")?;
-        for (i, codec) in self.supplemental_codecs.iter().enumerate() {
-            if i > 0 {
-                write!(f, ",")?;
+        if !self.supplemental_codecs.is_empty() {
+            write!(f, ",SUPPLEMENTAL-CODECS=\"")?;
+            for (i, codec) in self.supplemental_codecs.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{codec}")?;
             }
-            write!(f, "{codec}")?;
+            write!(f, "\"")?;
         }
-        write!(f, "\"")?;
         // === SUPPLEMENTAL-CODECS end ===
 
         if let Some(hdcp_level) = &self.hdcp_level {
@@ -1979,14 +2124,16 @@ impl Display for IFrameStreamInf {
         }
 
         // === ALLOWED-CPC start
-        write!(f, ",ALLOWED-CPC=\"")?;
-        for (i, allowed_cpc_entry) in self.allowed_cpc.iter().enumerate() {
-            if i > 0 {
-                write!(f, ",")?;
+        if !self.allowed_cpc.is_empty() {
+            write!(f, ",ALLOWED-CPC=\"")?;
+            for (i, allowed_cpc_entry) in self.allowed_cpc.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{allowed_cpc_entry}")?;
             }
-            write!(f, "{allowed_cpc_entry}")?;
+            write!(f, "\"")?;
         }
-        write!(f, "\"")?;
         // === ALLOWED-CPC end
 
         write!(f, ",VIDEO-RANGE={}", self.video_range)?;
@@ -2032,11 +2179,11 @@ impl Display for SessionData {
         write!(f, "DATA-ID=\"{}\"", self.data_id)?;
         match &self.data_type {
             SessionDataType::Value(value) => write!(f, ",VALUE=\"{value}\"")?,
-            SessionDataType::Uri(uri) => write!(f, ",URL=\"{uri}\"")?,
+            SessionDataType::Uri(uri) => write!(f, ",URI=\"{uri}\"")?,
         }
         write!(f, ",FORMAT={}", self.format)?;
         if let Some(language) = &self.language {
-            write!(f, ",LANGUAGE={language}")?;
+            write!(f, ",LANGUAGE=\"{language}\"")?;
         }
 
         Ok(())
@@ -2052,7 +2199,7 @@ impl Display for MultivariantExclusiveTag {
                 write!(f, "{iframe_stream_inf}")?;
             }
             MultivariantExclusiveTag::SessionData(session_data) => write!(f, "{session_data}")?,
-            MultivariantExclusiveTag::SessionKey(key) => write!(f, "{key}")?,
+            MultivariantExclusiveTag::SessionKey(key) => write!(f, "#EXT-X-SESSION-KEY:{key}")?,
             MultivariantExclusiveTag::ContentSteering(content_steering) => {
                 write!(f, "#EXT-X-CONTENT-STEERING:")?;
                 write!(f, "SERVER-URI=\"{}\"", content_steering.0)?;
@@ -2066,17 +2213,133 @@ impl Display for MultivariantExclusiveTag {
     }
 }
 
+
 impl Display for MultivariantPlaylist {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "#EXTM3U")?;
         for item in &self.items {
             match item {
                 MultivariantPlaylistItem::SharedTag(tag) => writeln!(f, "{tag}")?,
-                MultivariantPlaylistItem::ExclusiveTag(tag) => writeln!(f, "{tag}")?
+                MultivariantPlaylistItem::ExclusiveTag(tag) => writeln!(f, "{tag}")?,
             }
         }
         Ok(())
     }
+}
+
+impl StreamInf {
+    pub fn new(uri: Uri) -> Self {
+        Self {
+            uri,
+            bandwidth: 0,
+            average_bandwidth: None,
+            score: None,
+            codecs: Vec::new(),
+            supplemental_codecs: SupplementalCodecs::default(),
+            resolution: None,
+            frame_rate: None,
+            hdcp_level: None,
+            allowed_cpc: Vec::new(),
+            video_range: VideoRange::default(),
+            req_video_layout: None,
+            stable_variant_id: None,
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
+            pathway_id: None,
+        }
+    }
+}
+
+impl PendingStreamInf {
+    pub fn new() -> Self {
+        Self {
+            bandwidth: 0,
+            average_bandwidth: None,
+            score: None,
+            codecs: Vec::new(),
+            supplemental_codecs: SupplementalCodecs::default(),
+            resolution: None,
+            frame_rate: None,
+            hdcp_level: None,
+            allowed_cpc: Vec::new(),
+            video_range: VideoRange::default(),
+            req_video_layout: None,
+            stable_variant_id: None,
+            audio: None,
+            video: None,
+            subtitles: None,
+            closed_captions: None,
+            pathway_id: None,
+        }
+    }
+
+    pub fn build(self, uri: &Uri) -> StreamInf {
+        StreamInf {
+            uri: uri.clone(),
+            bandwidth: self.bandwidth,
+            average_bandwidth: self.average_bandwidth,
+            score: self.score,
+            codecs: self.codecs,
+            supplemental_codecs: self.supplemental_codecs,
+            resolution: self.resolution,
+            frame_rate: self.frame_rate,
+            hdcp_level: self.hdcp_level,
+            allowed_cpc: self.allowed_cpc,
+            video_range: self.video_range,
+            req_video_layout: self.req_video_layout,
+            stable_variant_id: self.stable_variant_id,
+            audio: self.audio,
+            video: self.video,
+            subtitles: self.subtitles,
+            closed_captions: self.closed_captions,
+            pathway_id: self.pathway_id,
+        }
+    }
+}
+
+impl Default for StreamInfParserState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StreamInfParserState {
+    pub fn new() -> Self {
+        Self {
+            pending_stream_inf: PendingStreamInf::new(),
+            uri: None,
+        }
+    }
+
+    pub fn pending_stream_inf(&self) -> &PendingStreamInf {
+        &self.pending_stream_inf
+    }
+
+    pub(crate) fn accept_line(&mut self, line: &str) -> Result<(), ParseError> {
+        let attrs = if line.starts_with("#EXT-X-STREAM-INF:") {
+            let attr_str = &line["#EXT-X-STREAM-INF:".len()..];
+            println!("stream-inf: {attr_str:?}");
+            parse_attribute_list(attr_str)?
+        } else {
+            return Ok(());
+        };
+
+        let pending_stream_inf = PendingStreamInf::try_from(attrs)?;
+
+        self.pending_stream_inf = pending_stream_inf;
+        Ok(())
+    }
+
+    pub fn reset(&mut self) {
+        self.pending_stream_inf = PendingStreamInf::new();
+        self.uri = None;
+    }
+
+    pub(crate) fn finish(&mut self) -> PendingStreamInf {
+        std::mem::replace(&mut self.pending_stream_inf, PendingStreamInf::new())
+    }
+    
 }
 
 #[cfg(test)]

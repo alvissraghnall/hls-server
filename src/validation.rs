@@ -1,3 +1,5 @@
+use std::{collections::HashSet, hash::Hash};
+
 use crate::{
     error::ValidationError,
     media::MediaExclusiveTag,
@@ -142,11 +144,19 @@ impl Tag for Playlist {
                     );
                 }
 
+                let mut skip_seen = HashSet::new();
+
                 if let Some(skip) = media_playlist
                     .get_metadata()
                     .iter()
                     .find_map(|m| m.as_skip())
                 {
+                    if !skip_seen.insert(&skip) {
+                        return Err(ValidationError::InvalidMediaMetadata(
+                            "A Media Playlist MUST NOT contain more than one EXT-X-SKIP tag.".into(),
+                        ));
+                    }
+
                     require_version!(
                         version,
                         true,

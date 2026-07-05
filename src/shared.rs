@@ -95,7 +95,8 @@ impl Display for SharedTag {
                 time_offset,
             } => write!(
                 f,
-                "#EXT-X-START:PRECISE={precise},TIME-OFFSET={time_offset}"
+                "#EXT-X-START:PRECISE={},TIME-OFFSET={time_offset}",
+                if *precise { "YES" } else { "NO" }
             ),
             SharedTag::Variable(var) => write!(f, "#EXT-X-DEFINE:{var}"),
         }

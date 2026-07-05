@@ -3,7 +3,11 @@ pub mod encrypt {
     use aes::cipher::{
         BlockModeEncrypt, Iv, Key as AesKey, KeyIvInit, block_padding::Pkcs7, consts::U16,
     };
-    use aes_gcm::{AesGcm, Key as AesGcmKey, KeyInit, Nonce, aead::Aead, aes::Aes256};
+    use aes_gcm::{
+        AeadCore, AesGcm, Key as AesGcmKey, KeyInit, Nonce,
+        aead::{Aead, OsRng, rand_core::RngCore},
+        aes::Aes256,
+    };
     use cbc::Encryptor;
 
     use crate::error::KeyError;
@@ -43,17 +47,37 @@ pub mod encrypt {
         ))
     }
 
-    pub fn encrypt_aes_256_gcm(
-        plain_text: &[u8],
-        key: &[u8],
-        nonce: &[u8],
-    ) -> Result<Vec<u8>, KeyError> {
-        let cipher = Aes256GcmCustomNonce::new(AesGcmKey::<Aes256GcmCustomNonce>::from_slice(key));
+    pub fn encrypt_aes_256_gcm(plain_text: &[u8], key: &[u8]) -> Result<Vec<u8>, KeyError> {
+        use aes_gcm::{AeadInPlace, KeyInit, Nonce};
 
-        let ciphertext = cipher.encrypt(Nonce::from_slice(nonce), plain_text)?;
-        let mut out = Vec::with_capacity(nonce.len() + ciphertext.len());
-        out.extend_from_slice(nonce);
-        out.extend_from_slice(&ciphertext);
+        if key.len() != 32 {
+            return Err(KeyError {
+                message: "AES-256 key must be 32 bytes".to_string(),
+            });
+        }
+
+        let cipher = Aes256GcmCustomNonce::new_from_slice(key).map_err(|_| KeyError {
+            message: "Invalid key slice".to_string(),
+        })?;
+
+        let mut iv_bytes = [0u8; 16];
+        OsRng.fill_bytes(&mut iv_bytes);
+        let nonce = Nonce::<aes_gcm::aead::consts::U16>::from_slice(&iv_bytes);
+
+        // clone plaintext into mut buffer for in-place encryption
+        let mut buffer = plain_text.to_vec();
+
+        let tag = cipher
+            .encrypt_in_place_detached(nonce, &[], &mut buffer)
+            .map_err(|_| KeyError {
+                message: "Encryption failed".to_string(),
+            })?;
+
+        let mut out = Vec::with_capacity(16 + buffer.len() + 16);
+        out.extend_from_slice(&iv_bytes);
+        out.extend_from_slice(&buffer);
+        out.extend_from_slice(tag.as_slice());
+
         Ok(out)
     }
 }
@@ -71,11 +95,7 @@ pub mod decrypt {
     type Aes256GcmCustomNonce = AesGcm<Aes256, U16>;
     type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
-    pub fn decrypt_aes_128(
-        cipher_text: &[u8],
-        key: &[u8],
-        iv: &[u8],
-    ) -> Result<Vec<u8>, KeyError> {
+    pub fn decrypt_aes_128(cipher_text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, KeyError> {
         let key = AesKey::<Decryptor<Aes128>>::try_from(key).unwrap();
         let iv = Iv::<Decryptor<Aes128>>::try_from(iv).unwrap();
 
@@ -158,9 +178,8 @@ mod tests {
     fn test_aes_256_gcm() {
         let plain_text = b"Hello, World!";
         let key = [0x42; 32];
-        let nonce = [0x24; 16];
 
-        let cipher_text = encrypt_aes_256_gcm(plain_text, &key, &nonce).unwrap();
+        let cipher_text = encrypt_aes_256_gcm(plain_text, &key).unwrap();
         let decrypted_text = decrypt_aes_256_gcm(&cipher_text, &key).unwrap();
 
         assert_eq!(plain_text, decrypted_text.as_slice());

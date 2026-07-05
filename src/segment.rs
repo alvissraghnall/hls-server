@@ -3,7 +3,11 @@ use std::{fmt::Display, fs, str::FromStr};
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone as _};
 
 use crate::{
-    attribute_list::{AttributeList, parse_attribute_list}, error::ParseError, key, shared::Tag, uri::Uri,
+    attribute_list::{AttributeList, parse_attribute_list},
+    error::ParseError,
+    key, segment,
+    shared::Tag,
+    uri::Uri,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -222,15 +226,31 @@ impl PendingSegment {
                 self.byte_range = Some(ByteRange { len, offset });
             }
             tag if tag.starts_with("#EXT-X-DISCONTINUITY") => {
+                // Any EXT-X-DISCONTINUITY applying to the Parent Segment MUST appear before that parent's first EXT-X-PART tag.
+                if self.part.is_some() {
+                    return Err(ParseError::InvalidLine(
+                        "EXT-X-DISCONTINUITY found in segment after first EXT-X-PART tags".into(),
+                    ));
+                }
                 self.discontinuity = true;
             }
             tag if tag.starts_with("#EXT-X-KEY:") => {
+                if self.part.is_some() {
+                    return Err(ParseError::InvalidLine(
+                        "EXT-X-KEY found in segment after first EXT-X-PART tags".into(),
+                    ));
+                }
                 let attr_str = &tag["#EXT-X-KEY:".len()..];
                 let attrs = parse_attribute_list(attr_str)?;
                 let key = Key::try_from(attrs)?;
                 self.key = Some(key);
             }
             tag if tag.starts_with("#EXT-X-MAP:") => {
+                if self.part.is_some() {
+                    return Err(ParseError::InvalidLine(
+                        "EXT-X-MAP found in segment after first EXT-X-PART tags".into(),
+                    ));
+                }
                 let attr_str = &tag["#EXT-X-MAP:".len()..];
                 let attrs = parse_attribute_list(attr_str)?;
 
@@ -238,6 +258,12 @@ impl PendingSegment {
                 self.map = Some(map);
             }
             tag if tag.starts_with("#EXT-X-PROGRAM-DATE-TIME:") => {
+                if self.part.is_some() {
+                    return Err(ParseError::InvalidLine(
+                        "EXT-X-PROGRAM-DATE-TIME found in segment after first EXT-X-PART tags"
+                            .into(),
+                    ));
+                }
                 let datetime_str = &tag["#EXT-X-PROGRAM-DATE-TIME:".len()..];
                 let datetime = parse_datetime(datetime_str)
                     .map_err(|_| ParseError::InvalidLine(line.to_string()))?;
@@ -263,9 +289,9 @@ impl PendingSegment {
         Ok(())
     }
 
-    pub(crate) fn build(self, uri: Uri) -> Result<MediaSegment, ParseError> {
+    pub(crate) fn build(self, uri: &Uri) -> Result<MediaSegment, ParseError> {
         MediaSegment::try_from(self).map(|mut seg| {
-            seg.uri = uri;
+            seg.uri = uri.clone();
             seg
         })
     }
@@ -639,7 +665,7 @@ impl Display for DurationValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DurationValue::Int(i) => write!(f, "#EXTINF:{i}"),
-            DurationValue::Float(fl) => write!(f, "#EXTINF:{fl}"),
+            DurationValue::Float(fl) => write!(f, "#EXTINF:{:.3}", fl),
         }
     }
 }
@@ -669,7 +695,7 @@ impl Display for Method {
 
 impl Display for Key {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#EXT-X-KEY:METHOD={}", self.method)?;
+        write!(f, "METHOD={}", self.method)?;
         write!(f, ",URI=\"{}\"", self.uri)?;
         if let Some(iv) = &self.iv {
             write!(f, ",IV=0x{}", hex::encode(iv))?;
@@ -677,14 +703,16 @@ impl Display for Key {
         if let Some(key_format) = &self.key_format {
             write!(f, ",KEYFORMAT=\"{key_format}\"")?;
         }
-        for (i, version) in self.key_format_versions.iter().enumerate() {
-            if i > 0 {
-                write!(f, "/")?;
+        if !self.key_format_versions.is_empty() {
+            write!(f, ",KEYFORMATVERSIONS=\"")?;
+            for (i, version) in self.key_format_versions.iter().enumerate() {
+                if i > 0 {
+                    write!(f, "/")?;
+                }
+                write!(f, "{version}")?;
             }
-            write!(f, "{version}")?;
+            write!(f, "\"")?;
         }
-
-        write!(f, "\"")?;
 
         Ok(())
     }
@@ -754,8 +782,12 @@ impl Display for MediaSegment {
             writeln!(f, "#EXT-X-DISCONTINUITY")?;
         }
 
+        // had to prepend with #EXT-X-KEY: cos session-key
+        // multivariant-exclusive tag was also using key type
+        // and it was causing an issue with PlaylistKind 
+        // (in scenarios where we tried to parse back and forth)
         if let Some(key) = key {
-            writeln!(f, "{key}")?;
+            writeln!(f, "#EXT-X-KEY:{key}")?;
         }
 
         if let Some(map) = map {
@@ -781,44 +813,40 @@ impl Display for MediaSegment {
 }
 
 impl MediaSegment {
-    pub fn decrypt(&self) -> Result<Vec<u8>, String> {
-        if let Some(key) = &self.key {
-            let key_bytes = {
-                if key.method != Method::Aes128 && key.method != Method::Aes256Gcm {
-                    return Err("Unsupported encryption method".to_string());
+    pub fn encrypt(&self, raw_key_bytes: &[u8], segment_data: &[u8]) -> Result<Vec<u8>, String> {
+        let key = self.key.as_ref().ok_or("No encryption key found")?;
+
+        match key.method {
+            Method::Aes128 => {
+                if raw_key_bytes.len() != 16 {
+                    return Err("Invalid AES-128 key length. Must be 16 bytes.".to_string());
                 }
-                let key_data = fs::read(&key.uri.to_string()).map_err(|e| e.to_string())?;
-                key_data
-            };
 
-            let iv = if key.method == Method::Aes128 {
-                key.iv.clone().unwrap_or_else(|| {
-                    let seq_num = self.media_sequence;
-                    seq_num.to_be_bytes().to_vec()
-                })
-            } else {
-                Vec::with_capacity(0)
-            };
+                let iv = match &key.iv {
+                    Some(custom_iv) => custom_iv.clone(),
+                    None => {
+                        // left-pad media sequence number to 16 bytes per HLS spec
+                        let mut padded_iv = vec![0u8; 16];
+                        let seq_bytes = self.media_sequence.to_be_bytes();
+                        let start_idx = 16 - seq_bytes.len();
+                        padded_iv[start_idx..].copy_from_slice(&seq_bytes);
+                        padded_iv
+                    }
+                };
 
-            // if key.method == Method::Aes128 {
-            //     if key_bytes.len() != 16 {
-            //         return Err("Invalid AES-128 key length".to_string());
-            //     }
-            //     crate::key::decrypt::decrypt_aes_128(&key_bytes, &iv, &self.uri.to_string())
-            // } else if key.method == Method::Aes256Gcm {
-            //     if key_bytes.len() != 32 {
-            //         return Err("Invalid AES-256-GCM key length".to_string());
-            //     }
-            //     crate::key::decrypt::decrypt_aes_256_gcm(&key_bytes, &self.uri.to_string())
-            // } else {
-            //     unimplemented!()
-            // }
+                crate::key::encrypt::encrypt_aes_128(segment_data, raw_key_bytes, &iv)
+                    .map_err(|e| e.to_string())
+            }
 
-            unimplemented!(
-                "Decryption logic is not fully implemented yet. This is a placeholder for the actual decryption process."
-            );
-        } else {
-            return Err("No encryption key found".to_string());
-        };
+            Method::Aes256Gcm => {
+                if raw_key_bytes.len() != 32 {
+                    return Err("Invalid AES-256-GCM key length. Must be 32 bytes.".to_string());
+                }
+                crate::key::encrypt::encrypt_aes_256_gcm(&segment_data, raw_key_bytes)
+                    .map_err(|e| e.to_string())
+            }
+
+            _ => Err("Unsupported encryption method".to_string()),
+        }
     }
 }

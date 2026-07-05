@@ -26,7 +26,7 @@ pub(crate) enum MediaExclusiveTag {
     ServerControl(ServerControl),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlayListType {
     Vod,
     Event,

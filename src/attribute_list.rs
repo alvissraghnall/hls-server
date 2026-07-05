@@ -154,7 +154,10 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
             Ok(AttributeValue::EnumeratedString(parsed))
         }
 
-        "CODECS" => Ok(AttributeValue::QuotedString(parse_quoted_string(value)?)),
+        "CODECS" => {
+            println!("codecs: {value:?}");
+            Ok(AttributeValue::QuotedString(parse_quoted_string(value)?))
+        }
 
         "NAME" => {
             let parsed = parse_quoted_string(value)?;
@@ -169,15 +172,6 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
         }
         "VALUE" => {
             let parsed = parse_quoted_string(value)?;
-
-            if !is_valid_ext_x_define_allow_empty(&parsed) {
-                return Err(ParseError::InvalidAttributeValue {
-                    attribute: "VALUE".into(),
-                    value: parsed,
-                    expected: "a valid VALUE according to HLS spec",
-                });
-            }
-
             Ok(AttributeValue::QuotedString(parsed))
         }
 
@@ -366,7 +360,11 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
             // i think i should improve this error handling
             // really sooon
             let parsed_qt_string = parse_quoted_string(value);
-            if let Ok(v) = parsed_qt_string { Ok(AttributeValue::QuotedString(v)) } else {
+            println!("parsed_qt_string: {parsed_qt_string:?}");
+
+            if let Ok(v) = parsed_qt_string {
+                Ok(AttributeValue::QuotedString(v))
+            } else {
                 let parsed_enumerated_string = parse_enumerated_string(value)?;
                 if parsed_enumerated_string != "NONE" {
                     return Err(ParseError::InvalidEnumeratedString {
@@ -392,17 +390,39 @@ fn parse_attribute_value(name: &str, value: &str) -> Result<AttributeValue, Pars
 
 pub(crate) fn parse_attribute_list(s: &str) -> Result<AttributeList, ParseError> {
     let mut attrs = AttributeList::new();
-    for (key, value) in s
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| s.split_once('='))
-    {
-        let key = key.trim();
-        let value = value.trim();
-        attrs.insert(key.to_string(), parse_attribute_value(key, value)?);
+   
+    for part in split_attributes(s) {
+        let (key, value) = part
+            .split_once('=')
+            .ok_or(ParseError::InvalidAttributeDefinition { 
+                definition: "key=value".into(),
+            })?;
+
+        let value = parse_attribute_value(key.trim(), value.trim())?;
+        attrs.insert(key.trim().to_string(), value);
     }
+
     Ok(attrs)
+}
+
+fn split_attributes(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+
+    for (i, c) in s.char_indices() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                parts.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+
+    parts.push(s[start..].trim());
+    parts
 }
 
 pub(crate) fn is_valid_cpc_label(s: &str) -> bool {
