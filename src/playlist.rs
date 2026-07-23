@@ -505,7 +505,9 @@ impl TryFrom<AttributeList> for RenditionReport {
                 expected: "a valid decimal integer",
             })?;
 
-        let last_part = value.get("LAST-PART").and_then(super::attribute_list::AttributeValue::as_decimal_integer);
+        let last_part = value
+            .get("LAST-PART")
+            .and_then(super::attribute_list::AttributeValue::as_decimal_integer);
 
         Ok(Self {
             uri,

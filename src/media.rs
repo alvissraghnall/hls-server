@@ -483,6 +483,7 @@ pub(crate) fn parse_media_exclusive_tag(line: &str) -> Result<MediaExclusiveTag,
 
             let server_control = ServerControl::try_from(attrs)?;
 
+            println!("{server_control}");
             Ok(MediaExclusiveTag::ServerControl(server_control))
         }
         _ => Err(ParseError::InvalidLine(line.to_string())),
@@ -504,13 +505,13 @@ impl fmt::Display for ServerControl {
             write!(f, ",CAN-SKIP-DATERANGES={can_skip_dateranges}")?;
         }
         if let Some(hold_back) = &self.hold_back {
-            write!(f, ",HOLD-BACK={hold_back}")?;
+            write!(f, ",HOLD-BACK={:.2}", hold_back)?;
         }
         if let Some(part_hold_back) = &self.part_hold_back {
-            write!(f, ",PART-HOLD-BACK={part_hold_back}")?;
+            write!(f, ",PART-HOLD-BACK={:.2}", part_hold_back)?;
         }
         if self.can_block_reload {
-            write!(f, ",CAN-BLOCK-RELOAD")?;
+            write!(f, ",CAN-BLOCK-RELOAD=YES")?;
         }
         Ok(())
     }

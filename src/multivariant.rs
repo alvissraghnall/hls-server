@@ -389,30 +389,30 @@ impl MultivariantPlaylist {
                 self.items.push(MultivariantPlaylistItem::SharedTag(tag));
             }
 
-            SharedTag::Variable(v) => match v {
-                PlayListVariableDefinition::NameValue { name: _, value: _ }
-                | PlayListVariableDefinition::QueryParam { name: _, value: _ } => {
-                    if self.variables.iter().any(|v| {
-                        matches!(
-                            v,
-                            PlayListVariableDefinition::NameValue { name, value: _ }
-                                | PlayListVariableDefinition::QueryParam { name, value: _ }
-                                if name == v.get_name()
-                        )
-                    }) {
-                        return Err(ParseError::DuplicateTag(String::from("EXT-X-DEFINE")));
+            SharedTag::Variable(ref v) => {
+                match v {
+                    PlayListVariableDefinition::NameValue { .. }
+                    | PlayListVariableDefinition::QueryParam { .. } => {
+                        if self.variables.iter().any(|existing| existing.get_name() == v.get_name()) {
+                            return Err(ParseError::DuplicateTag(String::from("EXT-X-DEFINE")));
+                        }
+            
+                        let v_clone = v.clone();
+            
+                        self.items.push(MultivariantPlaylistItem::SharedTag(tag));
+                        self.variables.push(v_clone);
                     }
-                    self.variables.push(v);
+            
+                    PlayListVariableDefinition::Import { .. } => {
+                        return Err(ParseError::InvalidAttributeDefinition {
+                            definition: String::from(
+                                "IMPORT attribute MUST not occur in Multivariant playlists",
+                            ),
+                        });
+                    }
                 }
-                PlayListVariableDefinition::Import { name: _ } => {
-                    return Err(ParseError::InvalidAttributeDefinition {
-                        definition: String::from(
-                            "IMPORT attribute MUST not occur in Multivariant playlists",
-                        ),
-                    });
-                }
-            },
-
+            }
+            
             SharedTag::Start {
                 precise: _,
                 time_offset: _,
@@ -1914,7 +1914,6 @@ impl Display for PendingStreamInf {
     }
 }
 
-
 impl Display for StreamInf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "#EXT-X-STREAM-INF:")?;
@@ -2025,7 +2024,6 @@ impl Display for StreamInf {
         Ok(())
     }
 }
-
 
 impl Display for ViewPresentationEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -2213,7 +2211,6 @@ impl Display for MultivariantExclusiveTag {
     }
 }
 
-
 impl Display for MultivariantPlaylist {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for item in &self.items {
@@ -2316,19 +2313,18 @@ impl StreamInfParserState {
         &self.pending_stream_inf
     }
 
-    pub(crate) fn accept_line(&mut self, line: &str) -> Result<(), ParseError> {
-        let attrs = if line.starts_with("#EXT-X-STREAM-INF:") {
-            let attr_str = &line["#EXT-X-STREAM-INF:".len()..];
-            println!("stream-inf: {attr_str:?}");
-            parse_attribute_list(attr_str)?
-        } else {
-            return Ok(());
-        };
-
+    pub(crate) fn accept_line(&mut self, line: &str) -> Result<bool, ParseError> {
+        if !line.starts_with("#EXT-X-STREAM-INF:") {
+            return Ok(false);
+        }
+    
+        let attr_str = &line["#EXT-X-STREAM-INF:".len()..];
+        let attrs = parse_attribute_list(attr_str)?;
         let pending_stream_inf = PendingStreamInf::try_from(attrs)?;
-
+    
         self.pending_stream_inf = pending_stream_inf;
-        Ok(())
+    
+        Ok(true)
     }
 
     pub fn reset(&mut self) {
@@ -2339,7 +2335,6 @@ impl StreamInfParserState {
     pub(crate) fn finish(&mut self) -> PendingStreamInf {
         std::mem::replace(&mut self.pending_stream_inf, PendingStreamInf::new())
     }
-    
 }
 
 #[cfg(test)]

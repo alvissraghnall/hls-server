@@ -63,7 +63,7 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
                 time_offset,
             })
         }
-        s if s.starts_with("#EXT-X-DEFINE:") => {
+        s if s.starts_with("#EXT-X-DEFINE:") => {           
             let attrs = s
                 .strip_prefix("#EXT-X-DEFINE:")
                 .ok_or(ParseError::InvalidLine(format!(
@@ -87,6 +87,7 @@ pub(crate) fn parse_shared_tag(line: &str, line_number: usize) -> Result<SharedT
 
 impl Display for SharedTag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        
         match self {
             SharedTag::Version(v) => write!(f, "#EXT-X-VERSION:{v}"),
             SharedTag::IndependentSegments => write!(f, "#EXT-X-INDEPENDENT-SEGMENTS"),

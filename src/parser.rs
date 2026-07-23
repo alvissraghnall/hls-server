@@ -4,7 +4,8 @@ use crate::{
     error::{self, ParseError},
     media::{MediaExclusiveTag, MediaPlaylist},
     multivariant::{
-        MultivariantExclusiveTag, MultivariantPlaylist, PendingStreamInf, StreamInfParserState,
+        MultivariantExclusiveTag, MultivariantPlaylist, MultivariantPlaylistItem, PendingStreamInf,
+        StreamInfParserState,
     },
     playlist::{MediaMetadata, SharedTag},
     read_write,
@@ -106,11 +107,11 @@ pub fn parse_file_into_playlist(
     let content = read_write::read_from_file(path)?;
 
     let mut parse_context = ParseContext::default();
-    
-    for (i, line) in content.lines().enumerate() {
-        println!("{:>3}: {}", i + 1, line);
-    }
-    
+
+    // for (i, line) in content.lines().enumerate() {
+    //     println!("{:>3}: {}", i + 1, line);
+    // }
+
     let mut line_number = 0;
     for raw_line in content.lines() {
         line_number += 1;
@@ -190,7 +191,7 @@ impl ParseContext {
             return Ok(ParsedLine::MediaMetadata(tag));
         }
 
-        if self.parse_stream_inf_state.accept_line(line).is_ok() {
+        if self.parse_stream_inf_state.accept_line(line)? {
             println!("pending stream inf: {:?}", line);
             return Ok(ParsedLine::PendingStreamInf);
         }
@@ -206,7 +207,7 @@ impl ParseContext {
 
     fn consume(&mut self, line: ParsedLine, line_number: usize) -> Result<(), ParseError> {
         let line_cl = line.clone();
-        
+
         match line {
             ParsedLine::Empty | ParsedLine::Comment | ParsedLine::M3U => {}
 
@@ -224,8 +225,12 @@ impl ParseContext {
             }
 
             ParsedLine::MultivariantTag(tag) => {
-                println!("Tag: {:?}, line: {:?}, line_number: {}", tag, line_cl, line_number);
+                println!(
+                    "Tag: {:?}, line: {:?}, line_number: {}",
+                    tag, line_cl, line_number
+                );
                 self.promote_to_multivariant()?;
+
                 self.consume_multivariant_tag(tag)?;
             }
 
@@ -336,7 +341,9 @@ impl ParseContext {
                 let stream_inf = pstream_inf.build(&uri);
                 self.playlist_parser
                     .items
-                    .push(PlaylistItem::MultivariantTag(MultivariantExclusiveTag::StreamInf(stream_inf)));
+                    .push(PlaylistItem::MultivariantTag(
+                        MultivariantExclusiveTag::StreamInf(stream_inf),
+                    ));
 
                 self.playlist_parser
                     .items
@@ -410,7 +417,7 @@ impl FromStr for Playlist {
 
         let mut line_number = 0;
         for raw_line in s.lines() {
-            println!("line: {raw_line:?}");
+            // println!("line: {raw_line:?}");
 
             line_number += 1;
 
@@ -530,7 +537,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::{fs, path::Path};
 
-    use crate::{media::PlayListType, uri::Uri};
+    use crate::{
+        media::PlayListType, multivariant::MultivariantPlaylistItem,
+        parser::PlaylistKind::Multivariant, uri::Uri,
+    };
 
     use super::*;
 
@@ -703,8 +713,8 @@ mod tests {
         let original = std::fs::read_to_string(playlist_file).unwrap();
 
         let rendered = playlist.to_string();
-        println!("rendered: {}", rendered);
-        println!("playlist: {:?}", playlist);
+
+        // println!("playlist: {:?}", playlist);
 
         let reparsed = Playlist::from_str(&rendered).unwrap();
         // assert_eq!(original, rendered);

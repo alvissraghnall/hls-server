@@ -722,7 +722,10 @@ impl Display for Map {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "#EXT-X-MAP:URI=\"{}\"", self.uri)?;
         if let Some(byte_range) = &self.byte_range {
-            write!(f, ",BYTERANGE=\"{byte_range}\"")?;
+            write!(f, ",BYTERANGE=\"{}", byte_range.len)?;
+            if let Some(offset) = byte_range.offset {
+                write!(f, "@{offset}\"")?;
+            }
         }
 
         Ok(())
