@@ -1,5 +1,7 @@
-use crate::{error::ParseError, media::{MediaExclusiveTag, parse_media_exclusive_tag}};
-
+use crate::{
+    error::ParseError,
+    media::{MediaExclusiveTag, parse_media_exclusive_tag},
+};
 
 mod attribute_list;
 pub mod codecs;
@@ -7,13 +9,13 @@ mod error;
 mod key;
 mod media;
 mod multivariant;
+pub mod parser;
 mod playlist;
+mod push_line;
 mod read_write;
 mod segment;
 mod shared;
 mod uri;
-mod parser;
-mod push_line;
 mod validation;
 
 static CRLF: &str = "\r\n";
@@ -50,13 +52,13 @@ fn parse_media_playlist(lines: &[String]) -> Result<media::MediaPlaylist, error:
                     tag,
                     MediaExclusiveTag::MediaSequence(_)
                         | MediaExclusiveTag::DiscontinuitySequence(_)
-                ) && seen_first_segment
-                => {
-                    return Err(ParseError::MediaSequenceAfterSegment);
-                }
+                ) && seen_first_segment =>
+            {
+                return Err(ParseError::MediaSequenceAfterSegment);
+            }
 
-                // also ensure X-DISCONTINUITY-SEQUENCE appears
-                // before EXT-X-DISCONTINUITY tag
+            // also ensure X-DISCONTINUITY-SEQUENCE appears
+            // before EXT-X-DISCONTINUITY tag
 
             // and if we encounter a segment URI, set seen_first_segment to true
             _ => {}
