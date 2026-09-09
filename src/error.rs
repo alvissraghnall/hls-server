@@ -1,9 +1,9 @@
-use core::fmt;
+use core::{error, fmt};
 use std::fmt::{Display, Formatter};
 
-use aes::cipher::inout::PadError;
-
 use crate::playlist::SharedTag;
+#[cfg(feature = "aes")]
+use aes::cipher::inout::PadError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {
@@ -128,6 +128,31 @@ impl From<ParseError> for PlaylistReadError {
     }
 }
 
+impl std::fmt::Display for PlaylistReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlaylistReadError::Io(e) => write!(f, "I/O error: {e}"),
+            PlaylistReadError::Utf8(e) => write!(f, "UTF-8 error: {e}"),
+            PlaylistReadError::BomPresent => write!(f, "BOM Present!"),
+            PlaylistReadError::InvalidControlCharacter(e) => {
+                write!(f, "Invalid control character: {e}")
+            }
+            PlaylistReadError::Parse(e) => write!(f, "Parse error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for PlaylistReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Utf8(e) => Some(e),
+            Self::Parse(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -135,7 +160,9 @@ impl std::fmt::Display for ParseError {
                 f,
                 "Mixed playlist types, e.g. Multivariant tags in a media playlist, or vice versa."
             ),
-            ParseError::BadOrder { expected, found } => write!(f, "Bad order: expected {expected}, found {found}"),            
+            ParseError::BadOrder { expected, found } => {
+                write!(f, "Bad order: expected {expected}, found {found}")
+            }
             ParseError::CodecError(e) => write!(f, "codec: {e}"),
             ParseError::InvalidLine(line) => write!(f, "Invalid line: {line}"),
             ParseError::UnknownTag { tag, span } => {
@@ -207,9 +234,16 @@ impl std::fmt::Display for ValidationError {
             ValidationError::InvalidSharedTag(shared, reason) => {
                 write!(f, "Invalid Shared Tag ({shared}): {reason}")
             }
-            ValidationError::MissingPartInf => write!(f, "Missing PART-INF tag to complement EXT-X-PART on a media segment"), 
-            ValidationError::InvalidServerControl(reason) => write!(f, "Invalid server control: {reason}"),
-            ValidationError::InvalidMediaMetadata(reason) => write!(f, "Invalid media metadata: {reason}"),
+            ValidationError::MissingPartInf => write!(
+                f,
+                "Missing PART-INF tag to complement EXT-X-PART on a media segment"
+            ),
+            ValidationError::InvalidServerControl(reason) => {
+                write!(f, "Invalid server control: {reason}")
+            }
+            ValidationError::InvalidMediaMetadata(reason) => {
+                write!(f, "Invalid media metadata: {reason}")
+            }
         }
     }
 }
@@ -402,6 +436,7 @@ impl std::fmt::Display for KeyError {
 
 impl std::error::Error for KeyError {}
 
+#[cfg(feature = "aes")]
 impl From<aes_gcm::aead::Error> for KeyError {
     fn from(value: aes_gcm::aead::Error) -> Self {
         Self {
@@ -410,6 +445,7 @@ impl From<aes_gcm::aead::Error> for KeyError {
     }
 }
 
+#[cfg(feature = "aes")]
 impl From<PadError> for KeyError {
     fn from(value: PadError) -> Self {
         Self {
@@ -417,3 +453,4 @@ impl From<PadError> for KeyError {
         }
     }
 }
+

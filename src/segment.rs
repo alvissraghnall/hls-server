@@ -787,7 +787,7 @@ impl Display for MediaSegment {
 
         // had to prepend with #EXT-X-KEY: cos session-key
         // multivariant-exclusive tag was also using key type
-        // and it was causing an issue with PlaylistKind 
+        // and it was causing an issue with PlaylistKind
         // (in scenarios where we tried to parse back and forth)
         if let Some(key) = key {
             writeln!(f, "#EXT-X-KEY:{key}")?;
@@ -816,6 +816,7 @@ impl Display for MediaSegment {
 }
 
 impl MediaSegment {
+    #[cfg(feature = "aes")]
     pub fn encrypt(&self, raw_key_bytes: &[u8], segment_data: &[u8]) -> Result<Vec<u8>, String> {
         let key = self.key.as_ref().ok_or("No encryption key found")?;
 
